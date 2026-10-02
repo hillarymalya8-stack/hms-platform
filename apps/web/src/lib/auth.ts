@@ -86,8 +86,17 @@ export function readSession(): StoredSession | null {
   try {
     const session = JSON.parse(rawSession) as StoredSession;
     if (!session.user || session.accessToken !== accessToken) return null;
+    if (accessToken.startsWith("demo.") && !isDemoAuthEnabled()) {
+      clearSession();
+      return null;
+    }
+    if (Number.isNaN(Date.parse(session.expiresAt)) || Date.parse(session.expiresAt) <= Date.now()) {
+      clearSession();
+      return null;
+    }
     return session;
   } catch {
+    clearSession();
     return null;
   }
 }

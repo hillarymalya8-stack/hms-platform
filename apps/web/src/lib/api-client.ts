@@ -1,3 +1,5 @@
+import { clearSession } from "@/lib/auth";
+
 export type ApiResult<T> =
   | {
       ok: true;
@@ -23,6 +25,19 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     });
 
     const body = await response.json().catch(() => undefined);
+
+    if (response.status === 401) {
+      clearSession();
+      if (typeof window !== "undefined") {
+        const nextPath = `${window.location.pathname}${window.location.search}`;
+        window.location.replace(`/login?next=${encodeURIComponent(nextPath)}`);
+      }
+
+      return {
+        ok: false,
+        error: "Your sign-in expired. Please sign in again."
+      };
+    }
 
     if (!response.ok) {
       return {
