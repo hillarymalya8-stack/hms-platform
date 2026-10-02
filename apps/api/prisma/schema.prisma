@@ -1,0 +1,1323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum RoleScope {
+  ORGANIZATION
+  PROPERTY
+}
+
+enum BusinessDateStatus {
+  OPEN
+  CLOSED
+  REOPENED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  COST_OF_SALES
+  EXPENSE
+}
+
+enum FinancialPeriodStatus {
+  OPEN
+  CLOSED
+  LOCKED
+}
+
+enum JournalStatus {
+  DRAFT
+  POSTED
+  REVERSED
+  VOID
+}
+
+enum RoomHousekeepingStatus {
+  DIRTY
+  CLEAN
+  INSPECTED
+}
+
+enum RoomOccupancyStatus {
+  AVAILABLE
+  RESERVED
+  OCCUPIED
+}
+
+enum RoomMaintenanceStatus {
+  AVAILABLE
+  OUT_OF_SERVICE
+  OUT_OF_ORDER
+}
+
+enum ReservationStatus {
+  TENTATIVE
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+enum FolioStatus {
+  OPEN
+  SETTLED
+  CLOSED
+  VOID
+}
+
+enum FolioItemType {
+  ROOM_CHARGE
+  POS_CHARGE
+  PAYMENT
+  DEPOSIT
+  DISCOUNT
+  TAX
+  REFUND
+  TRANSFER
+  OTHER
+}
+
+enum PosOutletType {
+  RESTAURANT
+  BAR
+  ROOM_SERVICE
+  SPA
+  OTHER
+}
+
+enum ProductType {
+  STOCKED
+  NON_STOCKED
+  SERVICE
+}
+
+enum DiningTableStatus {
+  AVAILABLE
+  SEATED
+  ORDER_OPEN
+  OUT_OF_SERVICE
+}
+
+enum CashierShiftStatus {
+  OPEN
+  CLOSED
+  RECONCILED
+}
+
+enum PosOrderStatus {
+  OPEN
+  HELD
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum PosServiceType {
+  DINE_IN
+  TAKEAWAY
+  ROOM_SERVICE
+  BAR
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  CREDIT
+  MOBILE_MONEY
+  BANK_TRANSFER
+  ROOM_CHARGE
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  VOID
+  REFUNDED
+}
+
+enum InventoryMovementType {
+  RECEIPT
+  ISSUE
+  TRANSFER
+  ADJUSTMENT
+  COUNT_VARIANCE
+}
+
+enum InventoryMovementStatus {
+  DRAFT
+  POSTED
+  VOID
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+enum SupplierInvoiceStatus {
+  DRAFT
+  MATCHED
+  POSTED
+  PAID
+  VOID
+}
+
+enum ReportExportStatus {
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum OfflineTerminalStatus {
+  ONLINE
+  OFFLINE
+  SYNCING
+}
+
+enum OfflineSyncEventStatus {
+  QUEUED
+  SYNCED
+  CONFLICT
+  FAILED
+}
+
+model Organization {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique
+  name      String
+  status    RecordStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  accounts               Account[]
+  auditLogs              AuditLog[]
+  guests                 Guest[]
+  persistenceTransitions PersistenceTransition[]
+  properties             Property[]
+  roles                  Role[]
+  users                  User[]
+
+  @@map("organizations")
+}
+
+model Property {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  code           String
+  name           String
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  accountMappings        AccountMapping[]
+  accounts               Account[]
+  auditLogs              AuditLog[]
+  businessDates          BusinessDate[]
+  defaultUsers           User[]                  @relation("UserDefaultProperty")
+  departments            Department[]
+  financialPeriods       FinancialPeriod[]
+  floors                 Floor[]
+  folios                 Folio[]
+  guests                 Guest[]
+  inventoryItems         InventoryItem[]
+  inventoryLocations     InventoryLocation[]
+  inventoryMovements     InventoryMovement[]
+  journalEntries         JournalEntry[]
+  offlineSyncEvents      OfflineSyncEvent[]
+  offlineTerminals       OfflineTerminal[]
+  payments               Payment[]
+  persistenceTransitions PersistenceTransition[]
+  posOutlets             PosOutlet[]
+  posOrders              PosOrder[]
+  productCategories      ProductCategory[]
+  products               Product[]
+  propertySettings       PropertySetting?
+  purchaseOrders         PurchaseOrder[]
+  reportExports          ReportExport[]
+  reservations           Reservation[]
+  roomTypes              RoomType[]
+  rooms                  Room[]
+  roles                  Role[]
+  suppliers              Supplier[]
+  supplierInvoices       SupplierInvoice[]
+  userRoles              UserRole[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+  @@map("properties")
+}
+
+model PropertySetting {
+  id                String   @id @default(uuid()) @db.Uuid
+  propertyId        String   @unique @map("property_id") @db.Uuid
+  currencyCode      String   @default("USD") @map("currency_code")
+  currencySymbol    String   @default("$") @map("currency_symbol")
+  currencyPrecision Int      @default(2) @map("currency_precision")
+  fiscalYearStart   DateTime @map("fiscal_year_start") @db.Date
+  checkInTime       String   @default("14:00") @map("check_in_time")
+  checkOutTime      String   @default("11:00") @map("check_out_time")
+  numberingRules    Json     @default("{}") @map("numbering_rules")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("property_settings")
+}
+
+model Department {
+  id         String       @id @default(uuid()) @db.Uuid
+  propertyId String       @map("property_id") @db.Uuid
+  code       String
+  name       String
+  active     Boolean      @default(true)
+  status     RecordStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  property     Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  journalLines JournalLine[]
+  posOutlets   PosOutlet[]
+
+  @@unique([propertyId, code])
+  @@index([propertyId, active])
+  @@map("departments")
+}
+
+model User {
+  id                String       @id @default(uuid()) @db.Uuid
+  organizationId    String       @map("organization_id") @db.Uuid
+  defaultPropertyId String?      @map("default_property_id") @db.Uuid
+  email             String       @unique
+  passwordHash      String       @map("password_hash")
+  fullName          String       @map("full_name")
+  mfaEnabled        Boolean      @default(false) @map("mfa_enabled")
+  status            RecordStatus @default(ACTIVE)
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  defaultProperty        Property?               @relation("UserDefaultProperty", fields: [defaultPropertyId], references: [id], onDelete: SetNull)
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  auditLogs              AuditLog[]
+  cashierShifts          CashierShift[]
+  closedBusinessDates    BusinessDate[]          @relation("ClosedBusinessDates")
+  closedFinancialPeriods FinancialPeriod[]       @relation("ClosedFinancialPeriods")
+  openedBusinessDates    BusinessDate[]          @relation("OpenedBusinessDates")
+  persistenceTransitions PersistenceTransition[]
+  sessions               UserSession[]
+  userRoles              UserRole[]
+
+  @@index([organizationId, status])
+  @@map("users")
+}
+
+model UserSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash")
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([tokenHash])
+  @@map("user_sessions")
+}
+
+model Role {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  propertyId     String?   @map("property_id") @db.Uuid
+  name           String
+  scope          RoleScope @default(PROPERTY)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property        Property?        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@unique([organizationId, propertyId, name])
+  @@index([organizationId, scope])
+  @@map("roles")
+}
+
+model Permission {
+  id        String   @id @default(uuid()) @db.Uuid
+  module    String
+  action    String
+  code      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@index([module, action])
+  @@map("permissions")
+}
+
+model UserRole {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  propertyId String?  @map("property_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  role     Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, propertyId])
+  @@index([userId, propertyId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model BusinessDate {
+  id           String             @id @default(uuid()) @db.Uuid
+  propertyId   String             @map("property_id") @db.Uuid
+  businessDate DateTime           @map("business_date") @db.Date
+  status       BusinessDateStatus @default(OPEN)
+  openedById   String?            @map("opened_by_id") @db.Uuid
+  closedById   String?            @map("closed_by_id") @db.Uuid
+  openedAt     DateTime           @default(now()) @map("opened_at")
+  closedAt     DateTime?          @map("closed_at")
+
+  closedBy User?    @relation("ClosedBusinessDates", fields: [closedById], references: [id], onDelete: SetNull)
+  openedBy User?    @relation("OpenedBusinessDates", fields: [openedById], references: [id], onDelete: SetNull)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, businessDate])
+  @@index([propertyId, status])
+  @@map("business_dates")
+}
+
+model RoomType {
+  id            String   @id @default(uuid()) @db.Uuid
+  propertyId    String   @map("property_id") @db.Uuid
+  code          String
+  name          String
+  baseOccupancy Int      @default(1) @map("base_occupancy")
+  maxOccupancy  Int      @default(2) @map("max_occupancy")
+  baseRate      Decimal  @default(0) @map("base_rate") @db.Decimal(18, 4)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reservationRooms ReservationRoom[]
+  rooms            Room[]
+
+  @@unique([propertyId, code])
+  @@index([propertyId, active])
+  @@map("room_types")
+}
+
+model Floor {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @map("property_id") @db.Uuid
+  name       String
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rooms    Room[]
+
+  @@unique([propertyId, name])
+  @@index([propertyId, sortOrder])
+  @@map("floors")
+}
+
+model Room {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  propertyId         String                 @map("property_id") @db.Uuid
+  roomTypeId         String                 @map("room_type_id") @db.Uuid
+  floorId            String?                @map("floor_id") @db.Uuid
+  roomNumber         String                 @map("room_number")
+  housekeepingStatus RoomHousekeepingStatus @default(CLEAN) @map("housekeeping_status")
+  occupancyStatus    RoomOccupancyStatus    @default(AVAILABLE) @map("occupancy_status")
+  maintenanceStatus  RoomMaintenanceStatus  @default(AVAILABLE) @map("maintenance_status")
+  active             Boolean                @default(true)
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  floor            Floor?            @relation(fields: [floorId], references: [id], onDelete: SetNull)
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType         RoomType          @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  reservationRooms ReservationRoom[]
+
+  @@unique([propertyId, roomNumber])
+  @@index([propertyId, roomTypeId])
+  @@index([propertyId, housekeepingStatus, occupancyStatus, maintenanceStatus])
+  @@map("rooms")
+}
+
+model Guest {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  propertyId     String?      @map("property_id") @db.Uuid
+  firstName      String       @map("first_name")
+  lastName       String       @map("last_name")
+  email          String?
+  phone          String?
+  documentNumber String?      @map("document_number")
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization        Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property            Property?          @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  folios              Folio[]
+  primaryReservations Reservation[]      @relation("PrimaryGuestReservations")
+  reservationGuests   ReservationGuest[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId, lastName, firstName])
+  @@index([propertyId, status])
+  @@map("guests")
+}
+
+model Reservation {
+  id                String            @id @default(uuid()) @db.Uuid
+  propertyId        String            @map("property_id") @db.Uuid
+  primaryGuestId    String            @map("primary_guest_id") @db.Uuid
+  reservationNumber String            @map("reservation_number")
+  arrivalDate       DateTime          @map("arrival_date") @db.Date
+  departureDate     DateTime          @map("departure_date") @db.Date
+  adults            Int               @default(1)
+  children          Int               @default(0)
+  status            ReservationStatus @default(CONFIRMED)
+  bookingSource     String?           @map("booking_source")
+  notes             String?
+  depositRequired   Decimal           @default(0) @map("deposit_required") @db.Decimal(18, 4)
+  depositPaid       Decimal           @default(0) @map("deposit_paid") @db.Decimal(18, 4)
+  checkedInAt       DateTime?         @map("checked_in_at")
+  checkedOutAt      DateTime?         @map("checked_out_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  folios            Folio[]
+  primaryGuest      Guest              @relation("PrimaryGuestReservations", fields: [primaryGuestId], references: [id], onDelete: Restrict)
+  property          Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reservationGuests ReservationGuest[]
+  reservationRooms  ReservationRoom[]
+
+  @@unique([propertyId, reservationNumber])
+  @@index([propertyId, arrivalDate, departureDate, status])
+  @@index([primaryGuestId, status])
+  @@map("reservations")
+}
+
+model ReservationRoom {
+  id            String            @id @default(uuid()) @db.Uuid
+  reservationId String            @map("reservation_id") @db.Uuid
+  roomTypeId    String            @map("room_type_id") @db.Uuid
+  roomId        String?           @map("room_id") @db.Uuid
+  ratePlanCode  String?           @map("rate_plan_code")
+  nightlyRate   Decimal           @default(0) @map("nightly_rate") @db.Decimal(18, 4)
+  status        ReservationStatus @default(CONFIRMED)
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  reservation Reservation        @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  room        Room?              @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  roomType    RoomType           @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  guests      ReservationGuest[]
+
+  @@index([roomId, status])
+  @@index([roomTypeId, status])
+  @@index([reservationId])
+  @@map("reservation_rooms")
+}
+
+model ReservationGuest {
+  reservationId     String  @map("reservation_id") @db.Uuid
+  guestId           String  @map("guest_id") @db.Uuid
+  reservationRoomId String? @map("reservation_room_id") @db.Uuid
+  guestRole         String  @default("guest") @map("guest_role")
+
+  guest           Guest            @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  reservation     Reservation      @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservationRoom ReservationRoom? @relation(fields: [reservationRoomId], references: [id], onDelete: SetNull)
+
+  @@id([reservationId, guestId])
+  @@index([guestId])
+  @@map("reservation_guests")
+}
+
+model Folio {
+  id            String      @id @default(uuid()) @db.Uuid
+  propertyId    String      @map("property_id") @db.Uuid
+  reservationId String      @map("reservation_id") @db.Uuid
+  guestId       String      @map("guest_id") @db.Uuid
+  folioNumber   String      @map("folio_number")
+  status        FolioStatus @default(OPEN)
+  balance       Decimal     @default(0) @db.Decimal(18, 4)
+  openedAt      DateTime    @default(now()) @map("opened_at")
+  closedAt      DateTime?   @map("closed_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  guest       Guest       @relation(fields: [guestId], references: [id], onDelete: Restrict)
+  items       FolioItem[]
+  posOrders   PosOrder[]
+  property    Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+
+  @@unique([propertyId, folioNumber])
+  @@index([propertyId, guestId, status])
+  @@index([reservationId, status])
+  @@map("folios")
+}
+
+model FolioItem {
+  id             String        @id @default(uuid()) @db.Uuid
+  folioId        String        @map("folio_id") @db.Uuid
+  itemType       FolioItemType @map("item_type")
+  sourceType     String?       @map("source_type")
+  sourceId       String?       @map("source_id")
+  description    String
+  quantity       Decimal       @default(1) @db.Decimal(18, 4)
+  unitPrice      Decimal       @default(0) @map("unit_price") @db.Decimal(18, 4)
+  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  taxAmount      Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  totalAmount    Decimal       @default(0) @map("total_amount") @db.Decimal(18, 4)
+  postedAt       DateTime      @default(now()) @map("posted_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  folio Folio @relation(fields: [folioId], references: [id], onDelete: Cascade)
+
+  @@index([folioId, postedAt])
+  @@index([sourceType, sourceId])
+  @@map("folio_items")
+}
+
+model PosOutlet {
+  id                      String        @id @default(uuid()) @db.Uuid
+  propertyId              String        @map("property_id") @db.Uuid
+  departmentId            String?       @map("department_id") @db.Uuid
+  name                    String
+  outletType              PosOutletType @default(RESTAURANT) @map("outlet_type")
+  defaultRevenueAccountId String?       @map("default_revenue_account_id") @db.Uuid
+  active                  Boolean       @default(true)
+  createdAt               DateTime      @default(now()) @map("created_at")
+  updatedAt               DateTime      @updatedAt @map("updated_at")
+
+  cashDrawers      CashDrawer[]
+  department       Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  orders           PosOrder[]
+  outletProducts   OutletProduct[]
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  offlineTerminals OfflineTerminal[]
+  shifts           CashierShift[]
+  tables           DiningTable[]
+  terminals        PosTerminal[]
+
+  @@unique([propertyId, name])
+  @@index([propertyId, outletType, active])
+  @@map("pos_outlets")
+}
+
+model PosTerminal {
+  id               String    @id @default(uuid()) @db.Uuid
+  outletId         String    @map("outlet_id") @db.Uuid
+  name             String
+  deviceIdentifier String    @map("device_identifier")
+  syncStatus       String    @default("ONLINE") @map("sync_status")
+  lastSeenAt       DateTime? @map("last_seen_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  cashDrawers CashDrawer[]
+  outlet      PosOutlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  orders      PosOrder[]
+  shifts      CashierShift[]
+
+  @@unique([outletId, deviceIdentifier])
+  @@index([outletId, syncStatus])
+  @@map("pos_terminals")
+}
+
+model CashDrawer {
+  id         String   @id @default(uuid()) @db.Uuid
+  outletId   String   @map("outlet_id") @db.Uuid
+  terminalId String?  @map("terminal_id") @db.Uuid
+  name       String
+  status     String   @default("ACTIVE")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  outlet   PosOutlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  terminal PosTerminal?   @relation(fields: [terminalId], references: [id], onDelete: SetNull)
+  shifts   CashierShift[]
+
+  @@unique([outletId, name])
+  @@index([terminalId])
+  @@map("cash_drawers")
+}
+
+model CashierShift {
+  id           String             @id @default(uuid()) @db.Uuid
+  outletId     String             @map("outlet_id") @db.Uuid
+  terminalId   String             @map("terminal_id") @db.Uuid
+  drawerId     String             @map("drawer_id") @db.Uuid
+  cashierId    String             @map("cashier_id") @db.Uuid
+  openingCash  Decimal            @default(0) @map("opening_cash") @db.Decimal(18, 4)
+  expectedCash Decimal            @default(0) @map("expected_cash") @db.Decimal(18, 4)
+  actualCash   Decimal?           @map("actual_cash") @db.Decimal(18, 4)
+  variance     Decimal?           @db.Decimal(18, 4)
+  status       CashierShiftStatus @default(OPEN)
+  openedAt     DateTime           @default(now()) @map("opened_at")
+  closedAt     DateTime?          @map("closed_at")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  cashier  User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  drawer   CashDrawer  @relation(fields: [drawerId], references: [id], onDelete: Restrict)
+  orders   PosOrder[]
+  outlet   PosOutlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  payments Payment[]
+  terminal PosTerminal @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+
+  @@index([outletId, status])
+  @@index([cashierId, status])
+  @@map("cashier_shifts")
+}
+
+model ProductCategory {
+  id                 String   @id @default(uuid()) @db.Uuid
+  propertyId         String   @map("property_id") @db.Uuid
+  parentId           String?  @map("parent_id") @db.Uuid
+  name               String
+  revenueAccountId   String?  @map("revenue_account_id") @db.Uuid
+  costAccountId      String?  @map("cost_account_id") @db.Uuid
+  inventoryAccountId String?  @map("inventory_account_id") @db.Uuid
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  children ProductCategory[] @relation("ProductCategoryTree")
+  parent   ProductCategory?  @relation("ProductCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  products Product[]
+  property Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, name])
+  @@index([propertyId, active])
+  @@map("product_categories")
+}
+
+model Product {
+  id           String      @id @default(uuid()) @db.Uuid
+  propertyId   String      @map("property_id") @db.Uuid
+  categoryId   String      @map("category_id") @db.Uuid
+  name         String
+  sku          String
+  productType  ProductType @default(NON_STOCKED) @map("product_type")
+  stockTracked Boolean     @default(false) @map("stock_tracked")
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  category ProductCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  property Property         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  variants ProductVariant[]
+
+  @@unique([propertyId, sku])
+  @@index([propertyId, active])
+  @@map("products")
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid()) @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  name      String
+  sku       String
+  basePrice Decimal  @default(0) @map("base_price") @db.Decimal(18, 4)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orderItems     PosOrderItem[]
+  outletProducts OutletProduct[]
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, sku])
+  @@index([productId, active])
+  @@map("product_variants")
+}
+
+model OutletProduct {
+  outletId         String  @map("outlet_id") @db.Uuid
+  productVariantId String  @map("product_variant_id") @db.Uuid
+  price            Decimal @db.Decimal(18, 4)
+  taxRate          Decimal @default(0) @map("tax_rate") @db.Decimal(8, 4)
+  available        Boolean @default(true)
+
+  outlet         PosOutlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+
+  @@id([outletId, productVariantId])
+  @@index([productVariantId, available])
+  @@map("outlet_products")
+}
+
+model DiningTable {
+  id          String            @id @default(uuid()) @db.Uuid
+  outletId    String            @map("outlet_id") @db.Uuid
+  tableNumber String            @map("table_number")
+  section     String?
+  seats       Int               @default(2)
+  status      DiningTableStatus @default(AVAILABLE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  orders PosOrder[]
+  outlet PosOutlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@unique([outletId, tableNumber])
+  @@index([outletId, status])
+  @@map("dining_tables")
+}
+
+model PosOrder {
+  id                 String         @id @default(uuid()) @db.Uuid
+  propertyId         String         @map("property_id") @db.Uuid
+  outletId           String         @map("outlet_id") @db.Uuid
+  terminalId         String?        @map("terminal_id") @db.Uuid
+  shiftId            String?        @map("shift_id") @db.Uuid
+  tableId            String?        @map("table_id") @db.Uuid
+  folioId            String?        @map("folio_id") @db.Uuid
+  orderNumber        String         @map("order_number")
+  status             PosOrderStatus @default(OPEN)
+  serviceType        PosServiceType @default(DINE_IN) @map("service_type")
+  subtotal           Decimal        @default(0) @db.Decimal(18, 4)
+  discountTotal      Decimal        @default(0) @map("discount_total") @db.Decimal(18, 4)
+  taxTotal           Decimal        @default(0) @map("tax_total") @db.Decimal(18, 4)
+  serviceChargeTotal Decimal        @default(0) @map("service_charge_total") @db.Decimal(18, 4)
+  tipTotal           Decimal        @default(0) @map("tip_total") @db.Decimal(18, 4)
+  grandTotal         Decimal        @default(0) @map("grand_total") @db.Decimal(18, 4)
+  idempotencyKey     String?        @map("idempotency_key")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+
+  folio    Folio?         @relation(fields: [folioId], references: [id], onDelete: SetNull)
+  items    PosOrderItem[]
+  outlet   PosOutlet      @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  payments Payment[]
+  property Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  shift    CashierShift?  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  table    DiningTable?   @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  terminal PosTerminal?   @relation(fields: [terminalId], references: [id], onDelete: SetNull)
+
+  @@unique([propertyId, orderNumber])
+  @@unique([propertyId, idempotencyKey])
+  @@index([propertyId, outletId, status])
+  @@index([tableId, status])
+  @@map("pos_orders")
+}
+
+model PosOrderItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  orderId          String   @map("order_id") @db.Uuid
+  productVariantId String   @map("product_variant_id") @db.Uuid
+  quantity         Decimal  @db.Decimal(18, 4)
+  unitPrice        Decimal  @map("unit_price") @db.Decimal(18, 4)
+  discountAmount   Decimal  @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  taxAmount        Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  totalAmount      Decimal  @map("total_amount") @db.Decimal(18, 4)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  order          PosOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productVariantId])
+  @@map("pos_order_items")
+}
+
+model Payment {
+  id                    String        @id @default(uuid()) @db.Uuid
+  propertyId            String        @map("property_id") @db.Uuid
+  orderId               String?       @map("order_id") @db.Uuid
+  shiftId               String?       @map("shift_id") @db.Uuid
+  sourceType            String        @default("POS_ORDER") @map("source_type")
+  sourceId              String        @map("source_id") @db.Uuid
+  paymentMethod         PaymentMethod @map("payment_method")
+  amount                Decimal       @db.Decimal(18, 4)
+  currencyCode          String        @default("USD") @map("currency_code")
+  status                PaymentStatus @default(COMPLETED)
+  systemReceiptNumber   String        @map("system_receipt_number")
+  externalReceiptNumber String?       @map("external_receipt_number")
+  authorizationCode     String?       @map("authorization_code")
+  externalReference     String?       @map("external_reference")
+  idempotencyKey        String?       @map("idempotency_key")
+  paymentMetadata       Json          @default("{}") @map("payment_metadata")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  order    PosOrder?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  property Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  shift    CashierShift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@unique([propertyId, systemReceiptNumber])
+  @@unique([propertyId, idempotencyKey])
+  @@index([propertyId, sourceType, sourceId])
+  @@index([propertyId, paymentMethod, externalReceiptNumber])
+  @@map("payments")
+}
+
+model InventoryItem {
+  id            String   @id @default(uuid()) @db.Uuid
+  propertyId    String   @map("property_id") @db.Uuid
+  sku           String
+  name          String
+  unitOfMeasure String   @default("EA") @map("unit_of_measure")
+  reorderLevel  Decimal  @default(0) @map("reorder_level") @db.Decimal(18, 4)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  balances           InventoryBalance[]
+  movements          InventoryMovement[]
+  property           Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  purchaseOrderLines PurchaseOrderLine[]
+
+  @@unique([propertyId, sku])
+  @@index([propertyId, active])
+  @@map("inventory_items")
+}
+
+model InventoryLocation {
+  id           String   @id @default(uuid()) @db.Uuid
+  propertyId   String   @map("property_id") @db.Uuid
+  code         String
+  name         String
+  locationType String   @default("STORE") @map("location_type")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  balances      InventoryBalance[]
+  movementsFrom InventoryMovement[] @relation("InventoryMovementFromLocation")
+  movementsTo   InventoryMovement[] @relation("InventoryMovementToLocation")
+  property      Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, code])
+  @@index([propertyId, active])
+  @@map("inventory_locations")
+}
+
+model InventoryBalance {
+  id             String   @id @default(uuid()) @db.Uuid
+  itemId         String   @map("item_id") @db.Uuid
+  locationId     String   @map("location_id") @db.Uuid
+  quantityOnHand Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  averageCost    Decimal  @default(0) @map("average_cost") @db.Decimal(18, 4)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  item     InventoryItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, locationId])
+  @@index([locationId])
+  @@map("inventory_balances")
+}
+
+model InventoryMovement {
+  id             String                  @id @default(uuid()) @db.Uuid
+  propertyId     String                  @map("property_id") @db.Uuid
+  itemId         String                  @map("item_id") @db.Uuid
+  fromLocationId String?                 @map("from_location_id") @db.Uuid
+  toLocationId   String?                 @map("to_location_id") @db.Uuid
+  journalEntryId String?                 @map("journal_entry_id") @db.Uuid
+  movementType   InventoryMovementType   @map("movement_type")
+  status         InventoryMovementStatus @default(DRAFT)
+  sourceType     String?                 @map("source_type")
+  sourceId       String?                 @map("source_id") @db.Uuid
+  quantity       Decimal                 @db.Decimal(18, 4)
+  unitCost       Decimal                 @default(0) @map("unit_cost") @db.Decimal(18, 4)
+  totalCost      Decimal                 @default(0) @map("total_cost") @db.Decimal(18, 4)
+  businessDate   DateTime                @map("business_date") @db.Date
+  postedAt       DateTime?               @map("posted_at")
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+
+  fromLocation InventoryLocation? @relation("InventoryMovementFromLocation", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  item         InventoryItem      @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry?      @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  property     Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  toLocation   InventoryLocation? @relation("InventoryMovementToLocation", fields: [toLocationId], references: [id], onDelete: Restrict)
+
+  @@index([propertyId, businessDate, status])
+  @@index([itemId, businessDate])
+  @@index([sourceType, sourceId])
+  @@map("inventory_movements")
+}
+
+model Supplier {
+  id           String       @id @default(uuid()) @db.Uuid
+  propertyId   String       @map("property_id") @db.Uuid
+  supplierCode String       @map("supplier_code")
+  name         String
+  email        String?
+  phone        String?
+  taxNumber    String?      @map("tax_number")
+  paymentTerms String?      @map("payment_terms")
+  status       RecordStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  purchaseOrders   PurchaseOrder[]
+  supplierInvoices SupplierInvoice[]
+
+  @@unique([propertyId, supplierCode])
+  @@index([propertyId, status])
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id          String              @id @default(uuid()) @db.Uuid
+  propertyId  String              @map("property_id") @db.Uuid
+  supplierId  String              @map("supplier_id") @db.Uuid
+  orderNumber String              @map("order_number")
+  status      PurchaseOrderStatus @default(DRAFT)
+  orderedAt   DateTime            @default(now()) @map("ordered_at")
+  expectedAt  DateTime?           @map("expected_at") @db.Date
+  approvedAt  DateTime?           @map("approved_at")
+  receivedAt  DateTime?           @map("received_at")
+  subtotal    Decimal             @default(0) @db.Decimal(18, 4)
+  taxTotal    Decimal             @default(0) @map("tax_total") @db.Decimal(18, 4)
+  grandTotal  Decimal             @default(0) @map("grand_total") @db.Decimal(18, 4)
+  notes       String?
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  lines            PurchaseOrderLine[]
+  property         Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  supplier         Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierInvoices SupplierInvoice[]
+
+  @@unique([propertyId, orderNumber])
+  @@index([propertyId, supplierId, status])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id               String   @id @default(uuid()) @db.Uuid
+  purchaseOrderId  String   @map("purchase_order_id") @db.Uuid
+  inventoryItemId  String?  @map("inventory_item_id") @db.Uuid
+  description      String
+  quantityOrdered  Decimal  @map("quantity_ordered") @db.Decimal(18, 4)
+  quantityReceived Decimal  @default(0) @map("quantity_received") @db.Decimal(18, 4)
+  unitCost         Decimal  @map("unit_cost") @db.Decimal(18, 4)
+  taxAmount        Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  totalAmount      Decimal  @map("total_amount") @db.Decimal(18, 4)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  purchaseOrder PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@index([inventoryItemId])
+  @@map("purchase_order_lines")
+}
+
+model SupplierInvoice {
+  id              String                @id @default(uuid()) @db.Uuid
+  propertyId      String                @map("property_id") @db.Uuid
+  supplierId      String                @map("supplier_id") @db.Uuid
+  purchaseOrderId String?               @map("purchase_order_id") @db.Uuid
+  journalEntryId  String?               @map("journal_entry_id") @db.Uuid
+  invoiceNumber   String                @map("invoice_number")
+  invoiceDate     DateTime              @map("invoice_date") @db.Date
+  dueDate         DateTime?             @map("due_date") @db.Date
+  status          SupplierInvoiceStatus @default(DRAFT)
+  subtotal        Decimal               @default(0) @db.Decimal(18, 4)
+  taxTotal        Decimal               @default(0) @map("tax_total") @db.Decimal(18, 4)
+  grandTotal      Decimal               @default(0) @map("grand_total") @db.Decimal(18, 4)
+  paidTotal       Decimal               @default(0) @map("paid_total") @db.Decimal(18, 4)
+  postedAt        DateTime?             @map("posted_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  journalEntry  JournalEntry?  @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  property      Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@unique([propertyId, supplierId, invoiceNumber])
+  @@index([propertyId, status, invoiceDate])
+  @@index([purchaseOrderId])
+  @@map("supplier_invoices")
+}
+
+model ReportExport {
+  id            String             @id @default(uuid()) @db.Uuid
+  propertyId    String             @map("property_id") @db.Uuid
+  requestedById String?            @map("requested_by_id") @db.Uuid
+  reportName    String             @map("report_name")
+  format        String
+  status        ReportExportStatus @default(QUEUED)
+  dateFrom      DateTime?          @map("date_from") @db.Date
+  dateTo        DateTime?          @map("date_to") @db.Date
+  filters       Json               @default("{}")
+  fileUrl       String?            @map("file_url")
+  errorMessage  String?            @map("error_message")
+  queuedAt      DateTime           @default(now()) @map("queued_at")
+  completedAt   DateTime?          @map("completed_at")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, status, queuedAt])
+  @@index([requestedById, queuedAt])
+  @@map("report_exports")
+}
+
+model OfflineTerminal {
+  id             String                @id @default(uuid()) @db.Uuid
+  propertyId     String                @map("property_id") @db.Uuid
+  outletId       String?               @map("outlet_id") @db.Uuid
+  terminalCode   String                @map("terminal_code")
+  name           String
+  status         OfflineTerminalStatus @default(ONLINE)
+  lastSeenAt     DateTime?             @map("last_seen_at")
+  deviceMetadata Json                  @default("{}") @map("device_metadata")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+
+  events   OfflineSyncEvent[]
+  outlet   PosOutlet?         @relation(fields: [outletId], references: [id], onDelete: SetNull)
+  property Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, terminalCode])
+  @@index([propertyId, status])
+  @@map("offline_terminals")
+}
+
+model OfflineSyncEvent {
+  id             String                 @id @default(uuid()) @db.Uuid
+  propertyId     String                 @map("property_id") @db.Uuid
+  terminalId     String                 @map("terminal_id") @db.Uuid
+  sourceType     String                 @map("source_type")
+  sourceId       String?                @map("source_id") @db.Uuid
+  localReference String                 @map("local_reference")
+  idempotencyKey String                 @map("idempotency_key")
+  status         OfflineSyncEventStatus @default(QUEUED)
+  payload        Json                   @default("{}")
+  conflictReason String?                @map("conflict_reason")
+  syncedAt       DateTime?              @map("synced_at")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  property Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  terminal OfflineTerminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, idempotencyKey])
+  @@index([propertyId, status, createdAt])
+  @@index([terminalId, status])
+  @@map("offline_sync_events")
+}
+
+model PersistenceTransition {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  propertyId     String?  @map("property_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  moduleId       String   @map("module_id")
+  moduleName     String   @map("module_name")
+  previousStage  String   @map("previous_stage")
+  targetStage    String   @map("target_stage")
+  note           String?
+  requiredChecks Json     @default("[]") @map("required_checks")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property     Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, moduleId, createdAt])
+  @@index([userId, createdAt])
+  @@map("persistence_transitions")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  propertyId     String?  @map("property_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  module         String
+  action         String
+  recordType     String   @map("record_type")
+  recordId       String?  @map("record_id")
+  previousValue  Json?    @map("previous_value")
+  newValue       Json?    @map("new_value")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property     Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, module, createdAt])
+  @@index([recordType, recordId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model Account {
+  id               String      @id @default(uuid()) @db.Uuid
+  organizationId   String      @map("organization_id") @db.Uuid
+  propertyId       String?     @map("property_id") @db.Uuid
+  parentId         String?     @map("parent_id") @db.Uuid
+  accountCode      String      @map("account_code")
+  accountName      String      @map("account_name")
+  accountType      AccountType @map("account_type")
+  isControlAccount Boolean     @default(false) @map("is_control_account")
+  active           Boolean     @default(true)
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property     Property?        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  parent       Account?         @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Account[]        @relation("AccountHierarchy")
+  mappings     AccountMapping[]
+  journalLines JournalLine[]
+
+  @@unique([organizationId, propertyId, accountCode])
+  @@index([organizationId, accountType])
+  @@index([propertyId, active])
+  @@map("accounts")
+}
+
+model AccountMapping {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String   @map("property_id") @db.Uuid
+  mappingType String   @map("mapping_type")
+  sourceType  String   @map("source_type")
+  sourceId    String?  @map("source_id") @db.Uuid
+  accountId   String   @map("account_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, mappingType, sourceType, sourceId])
+  @@index([propertyId, sourceType])
+  @@map("account_mappings")
+}
+
+model FinancialPeriod {
+  id         String                @id @default(uuid()) @db.Uuid
+  propertyId String                @map("property_id") @db.Uuid
+  startDate  DateTime              @map("start_date") @db.Date
+  endDate    DateTime              @map("end_date") @db.Date
+  status     FinancialPeriodStatus @default(OPEN)
+  closedById String?               @map("closed_by_id") @db.Uuid
+  closedAt   DateTime?             @map("closed_at")
+  createdAt  DateTime              @default(now()) @map("created_at")
+  updatedAt  DateTime              @updatedAt @map("updated_at")
+
+  closedBy User?          @relation("ClosedFinancialPeriods", fields: [closedById], references: [id], onDelete: SetNull)
+  property Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  journals JournalEntry[]
+
+  @@unique([propertyId, startDate, endDate])
+  @@index([propertyId, status])
+  @@map("financial_periods")
+}
+
+model JournalEntry {
+  id                String        @id @default(uuid()) @db.Uuid
+  propertyId        String        @map("property_id") @db.Uuid
+  financialPeriodId String        @map("financial_period_id") @db.Uuid
+  entryNumber       String        @map("entry_number")
+  sourceType        String        @map("source_type")
+  sourceId          String?       @map("source_id")
+  sourceNumber      String?       @map("source_number")
+  status            JournalStatus @default(DRAFT)
+  idempotencyKey    String?       @map("idempotency_key")
+  postedAt          DateTime?     @map("posted_at")
+  reversedEntryId   String?       @unique @map("reversed_entry_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  financialPeriod    FinancialPeriod     @relation(fields: [financialPeriodId], references: [id], onDelete: Restrict)
+  property           Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reversedEntry      JournalEntry?       @relation("JournalReversal", fields: [reversedEntryId], references: [id], onDelete: Restrict)
+  reversal           JournalEntry?       @relation("JournalReversal")
+  inventoryMovements InventoryMovement[]
+  lines              JournalLine[]
+  supplierInvoices   SupplierInvoice[]
+
+  @@unique([propertyId, entryNumber])
+  @@unique([propertyId, idempotencyKey])
+  @@index([propertyId, sourceType, sourceId])
+  @@index([financialPeriodId, status])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String   @id @default(uuid()) @db.Uuid
+  journalEntryId String   @map("journal_entry_id") @db.Uuid
+  accountId      String   @map("account_id") @db.Uuid
+  departmentId   String?  @map("department_id") @db.Uuid
+  debitAmount    Decimal  @default(0) @map("debit_amount") @db.Decimal(18, 4)
+  creditAmount   Decimal  @default(0) @map("credit_amount") @db.Decimal(18, 4)
+  description    String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  account      Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([departmentId])
+  @@map("journal_lines")
+}
