@@ -5,7 +5,6 @@
 [build.environment]
   NODE_VERSION = "20"
   NEXT_TELEMETRY_DISABLED = "1"
-  NEXT_PUBLIC_ENABLE_DEMO_AUTH = "true"
   NETLIFY_NEXT_SKEW_PROTECTION = "true"
 
 [functions]
