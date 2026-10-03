@@ -11,7 +11,7 @@
     "build": "npm run build -w @hms/shared && npm run build -w @hms/api && npm run build -w @hms/web",
     "build:api": "npm run build -w @hms/shared && npm run build -w @hms/api",
     "build:netlify": "npm run build -w @hms/shared && npm run build -w @hms/web",
-    "start:api": "npm run db:deploy -w @hms/api && npm run start -w @hms/api",
+    "start:api": "npm run db:deploy -w @hms/api && npm run db:seed -w @hms/api && npm run start -w @hms/api",
     "dev:api": "npm run dev -w @hms/api",
     "dev:web": "npm run dev -w @hms/web",
     "test": "npm run test -w @hms/api",
