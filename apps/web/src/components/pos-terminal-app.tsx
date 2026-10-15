@@ -738,10 +738,10 @@ export function PosTerminalApp() {
   }
 
   return (
-    <main className="min-h-screen bg-[#eef3ec]">
+    <main className="responsive-workspace min-h-screen bg-[#eef3ec]">
       <div className="grid min-h-screen lg:grid-cols-[80px_1fr]">
-        <aside className="flex flex-row items-center justify-between border-b border-border bg-[#163f35] px-3 py-3 text-white lg:flex-col lg:border-b-0 lg:border-r">
-          <div className="flex h-12 w-12 items-center justify-center rounded bg-white/10">
+        <aside className="flex flex-row flex-wrap items-center justify-between gap-2 border-b border-border bg-[#163f35] px-3 py-3 text-white lg:flex-col lg:border-b-0 lg:border-r">
+          <div className="hidden h-12 w-12 items-center justify-center rounded bg-white/10 sm:flex">
             <Store className="h-6 w-6" aria-hidden="true" />
           </div>
           <nav className="flex gap-2 lg:flex-col">
@@ -793,8 +793,13 @@ export function PosTerminalApp() {
             </div>
           </header>
 
-          <div className="grid flex-1 gap-4 p-4 xl:grid-cols-[1fr_420px]">
-            <section className="space-y-4">
+          <nav aria-label="POS sections" className="flex gap-2 border-b border-border bg-white px-3 py-2 xl:hidden">
+            <a href="#pos-products" className="inline-flex min-h-11 flex-1 items-center justify-center rounded border border-border px-3 text-sm font-semibold">Products</a>
+            <a href="#pos-ticket" className="inline-flex min-h-11 flex-1 items-center justify-center rounded bg-primary px-3 text-sm font-semibold text-primary-foreground">Ticket ({ticket.length}) &amp; payment</a>
+          </nav>
+
+          <div className="grid flex-1 gap-4 p-3 sm:p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <section id="pos-products" className="scroll-mt-4 space-y-4">
               <form onSubmit={signInCashier} className="grid gap-3 rounded border border-border bg-white p-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
                 <label className="block space-y-1.5">
                   <span className="text-sm font-medium">Cashier email</span>
@@ -918,7 +923,7 @@ export function PosTerminalApp() {
               </div>
             </section>
 
-            <form onSubmit={submitPayment} className="flex min-h-[640px] flex-col rounded border border-border bg-white">
+            <form id="pos-ticket" onSubmit={submitPayment} className="flex min-h-[640px] scroll-mt-4 flex-col rounded border border-border bg-white">
               <div className="border-b border-border px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-lg font-bold">Current Ticket</h2>
@@ -1038,7 +1043,7 @@ export function PosTerminalApp() {
                   />
                 </label>
 
-                <div className="mt-4 grid grid-cols-3 gap-2">
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
                   <Button type="button" variant="secondary" onClick={sendToPrep} disabled={ticket.length === 0 || busy || prepSent}>
                     <BellRing className="h-4 w-4" aria-hidden="true" />
                     Send

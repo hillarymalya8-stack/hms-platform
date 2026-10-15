@@ -90,9 +90,9 @@ export function LoginScreen() {
   }
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="responsive-workspace min-h-screen bg-background">
       <div className="grid min-h-screen lg:grid-cols-[0.95fr_1.05fr]">
-        <section className="flex min-h-[42vh] flex-col justify-between bg-[#163f35] p-6 text-white lg:min-h-screen lg:p-8">
+        <section className="flex flex-col justify-between bg-[#163f35] p-5 text-white sm:min-h-[42vh] sm:p-6 lg:min-h-screen lg:p-8">
           <div>
             <div className="flex h-12 w-12 items-center justify-center rounded bg-white/10">
               <ShieldCheck className="h-6 w-6" aria-hidden="true" />
@@ -105,7 +105,7 @@ export function LoginScreen() {
             </p>
           </div>
 
-          <div className="mt-8 grid gap-3 sm:grid-cols-2">
+          <div className="mt-8 hidden gap-3 sm:grid sm:grid-cols-2">
             {loginSystems.map((system) => (
               <div key={system.label} className="rounded border border-white/15 bg-white/8 p-4">
                 <system.icon className="h-5 w-5 text-white" aria-hidden="true" />
