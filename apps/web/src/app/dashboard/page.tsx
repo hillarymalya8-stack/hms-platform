@@ -31,6 +31,7 @@ import { SystemStatus } from "@/components/system-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
+import { MobileNavigation } from "@/components/mobile-navigation";
 import {
   foundationCards,
   hotelCoreCards,
@@ -44,10 +45,10 @@ import {
 export default function Home() {
   return (
     <RouteGuard requiredPermissions={["dashboard.view"]}>
-      <main className="min-h-screen">
+      <main className="responsive-workspace min-h-screen">
         <div className="grid min-h-screen lg:grid-cols-[264px_1fr]">
-        <aside className="border-r border-border bg-white/88 px-4 py-5">
-          <div className="mb-7 flex items-center gap-3">
+        <aside className="border-b border-border bg-white/88 px-4 py-4 lg:border-b-0 lg:border-r lg:py-5">
+          <div className="mb-3 flex items-center gap-3 lg:mb-7">
             <div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-primary-foreground">
               <ReceiptText className="h-5 w-5" aria-hidden="true" />
             </div>
@@ -57,7 +58,8 @@ export default function Home() {
             </div>
           </div>
 
-          <nav className="space-y-1">
+          <MobileNavigation>
+          <nav aria-label="Dashboard sections" className="space-y-1">
             {navigation.map((item) => (
               <a
                 key={item.label}
@@ -91,9 +93,10 @@ export default function Home() {
               Open POS terminal
             </a>
           </div>
+          </MobileNavigation>
         </aside>
 
-        <section className="px-5 py-5 md:px-8">
+        <section className="min-w-0 px-3 py-4 sm:px-5 sm:py-5 md:px-8">
           <header id="dashboard" className="mb-6 scroll-mt-5 flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="mb-2 flex flex-wrap items-center gap-2">

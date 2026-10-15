@@ -46,6 +46,55 @@ textarea {
   font: inherit;
 }
 
+.responsive-workspace {
+  overflow-wrap: anywhere;
+}
+
+.responsive-workspace .grid > *,
+.responsive-workspace .flex > * {
+  min-width: 0;
+}
+
+.responsive-workspace .overflow-x-auto {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+}
+
+.responsive-workspace svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 639px) {
+  .responsive-workspace button,
+  .responsive-workspace input:not([type="checkbox"]):not([type="radio"]),
+  .responsive-workspace select,
+  .responsive-workspace textarea,
+  .responsive-workspace nav a {
+    min-height: 44px;
+  }
+
+  .responsive-workspace input:not([type="checkbox"]):not([type="radio"]),
+  .responsive-workspace select,
+  .responsive-workspace textarea {
+    max-width: 100%;
+    font-size: 16px;
+  }
+
+  .responsive-workspace button {
+    height: auto;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  .responsive-workspace .overflow-x-auto::before {
+    content: "Swipe to view all columns";
+    display: block;
+    padding: 0.5rem 1rem;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+  }
+}
+
 ::selection {
   color: hsl(var(--primary-foreground));
   background: hsl(var(--primary));

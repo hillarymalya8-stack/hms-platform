@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MobileNavigation } from "@/components/mobile-navigation";
 import { clearSession, hasAnyPermission, readSession, resolveHomePath, type AuthenticatedUser } from "@/lib/auth";
 
 type ModuleShellProps = {
@@ -110,10 +111,10 @@ export function ModuleShell({ title, eyebrow, description, requiredPermissions, 
   }
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="responsive-workspace min-h-screen bg-background">
       <div className="grid min-h-screen lg:grid-cols-[248px_1fr]">
-        <aside className="border-r border-border bg-white px-4 py-5">
-          <div className="mb-6">
+        <aside className="border-b border-border bg-white px-4 py-4 lg:border-b-0 lg:border-r lg:py-5">
+          <div className="mb-3 lg:mb-6">
             <div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-primary-foreground">
               <ShieldCheck className="h-5 w-5" aria-hidden="true" />
             </div>
@@ -121,7 +122,8 @@ export function ModuleShell({ title, eyebrow, description, requiredPermissions, 
             <p className="text-xs text-muted-foreground">{user.fullName}</p>
           </div>
 
-          <nav className="space-y-1">
+          <MobileNavigation>
+          <nav aria-label="System modules" className="space-y-1">
             {allowedNav.map((item) => {
               const active = pathname === item.href;
               return (
@@ -154,9 +156,10 @@ export function ModuleShell({ title, eyebrow, description, requiredPermissions, 
             <LogOut className="h-4 w-4" aria-hidden="true" />
             Sign out
           </Button>
+          </MobileNavigation>
         </aside>
 
-        <section className="min-w-0 px-5 py-5 md:px-8">
+        <section className="min-w-0 px-3 py-4 sm:px-5 sm:py-5 md:px-8">
           <header className="mb-5 flex flex-col gap-3 border-b border-border pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
