@@ -40,6 +40,12 @@ export class PosController {
     return this.pos.listChargeableRooms(user);
   }
 
+  @RequirePermissions("pos.view")
+  @Get("bar-low-stock")
+  listBarLowStock(@CurrentUser() user: UserContext) {
+    return this.pos.listBarLowStock(user);
+  }
+
   @RequirePermissions("pos.orders.create")
   @Post("orders")
   createOrder(@CurrentUser() user: UserContext, @Body() dto: CreatePosOrderDto) {

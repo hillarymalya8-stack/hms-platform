@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query } from "@nestjs/common";
 import { CurrentUser } from "../../common/auth/current-user.decorator";
 import { RequirePermissions } from "../../common/auth/require-permissions.decorator";
 import { UserContext } from "../../common/auth/user-context";
 import { CreateInventoryItemDto } from "./dto/create-inventory-item.dto";
 import { PostInventoryMovementDto } from "./dto/post-inventory-movement.dto";
+import { RecordDailyUsageDto } from "./dto/record-daily-usage.dto";
 import { ReceiveInventoryDto } from "./dto/receive-inventory.dto";
 import { InventoryService } from "./inventory.service";
 
@@ -33,5 +34,17 @@ export class InventoryController {
   @Post("movements")
   postMovement(@CurrentUser() user: UserContext, @Body() dto: PostInventoryMovementDto) {
     return this.inventory.postMovement(user, dto);
+  }
+
+  @RequirePermissions("inventory.view")
+  @Get("daily-usage")
+  dailyUsage(@CurrentUser() user: UserContext, @Query("date") date?: string) {
+    return this.inventory.listDailyUsage(user, date);
+  }
+
+  @RequirePermissions("inventory.view")
+  @Post("daily-usage")
+  recordDailyUsage(@CurrentUser() user: UserContext, @Body() dto: RecordDailyUsageDto) {
+    return this.inventory.recordDailyUsage(user, dto);
   }
 }

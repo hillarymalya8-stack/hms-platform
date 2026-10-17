@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRightLeft, ClipboardCheck, Minus, PackagePlus, Plus, RefreshCcw, Warehouse } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, ClipboardCheck, ClipboardList, Minus, NotebookPen, PackagePlus, Plus, RefreshCcw, Warehouse } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,12 +41,37 @@ type Movement = {
   posting: string;
 };
 
+type UsageRecord = {
+  id: string;
+  businessDate: string;
+  itemId: string;
+  itemName: string;
+  unit: string;
+  locationId: string;
+  locationName: string;
+  locationType: string;
+  quantity: number;
+  value: number;
+  purpose: string | null;
+  notes: string | null;
+  recordedBy: string | null;
+  recordedAt: string;
+};
+
+type DailyUsageResponse = {
+  businessDate: string;
+  records: UsageRecord[];
+};
+
 type InventoryWorkspaceResponse = {
   items: InventoryItem[];
   locations: StoreLocation[];
   stock: StockLine[];
   movements: Movement[];
 };
+
+// Matches the bar terminal restock alert threshold.
+const BAR_RESTOCK_THRESHOLD = 3;
 
 export function InventoryWorkspace() {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -55,6 +80,17 @@ export function InventoryWorkspace() {
   const [movements, setMovements] = useState<Movement[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Loading saved inventory...");
+  const [usageDate, setUsageDate] = useState(todayIso());
+  const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([]);
+  const [usageMessage, setUsageMessage] = useState("Note what each section used today. This log does not change stock balances.");
+  const [usageFilter, setUsageFilter] = useState("ALL");
+  const [usageForm, setUsageForm] = useState({
+    locationId: "",
+    itemId: "",
+    quantity: "",
+    purpose: "",
+    notes: ""
+  });
 
   const [materialForm, setMaterialForm] = useState({
     sku: "",
@@ -91,12 +127,71 @@ export function InventoryWorkspace() {
     [items, locations, stock]
   );
 
+  const visibleUsage = usageFilter === "ALL" ? usageRecords : usageRecords.filter((record) => record.locationId === usageFilter);
+  const usageTotals = useMemo(
+    () =>
+      locations.map((location) => {
+        const records = usageRecords.filter((record) => record.locationId === location.id);
+        return {
+          location,
+          entries: records.length,
+          value: records.reduce((sum, record) => sum + record.value, 0)
+        };
+      }),
+    [locations, usageRecords]
+  );
+
+  const barRestockRows = stockRows.filter((row) => row.location?.type === "BAR" && row.quantity < BAR_RESTOCK_THRESHOLD);
+
   const inventoryValue = stockRows.reduce((sum, row) => sum + row.value, 0);
   const lowStockCount = stockRows.filter((row) => row.low).length;
 
   useEffect(() => {
     void loadData();
   }, []);
+
+  useEffect(() => {
+    void loadUsage(usageDate);
+  }, [usageDate]);
+
+  async function loadUsage(date: string) {
+    const result = await apiRequest<DailyUsageResponse>(`/inventory/daily-usage?date=${encodeURIComponent(date)}`);
+
+    if (!result.ok) {
+      setUsageMessage(result.error);
+      return;
+    }
+
+    setUsageRecords(result.data.records);
+  }
+
+  async function recordUsage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const quantity = Number(usageForm.quantity);
+    const item = items.find((entry) => entry.id === usageForm.itemId);
+    const location = locations.find((entry) => entry.id === usageForm.locationId);
+
+    if (!item || !location || !Number.isFinite(quantity) || quantity <= 0) {
+      setUsageMessage("Choose a section, material, and quantity used before saving.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<UsageRecord>("/inventory/daily-usage", {
+      method: "POST",
+      body: JSON.stringify({ ...usageForm, quantity: usageForm.quantity.trim(), businessDate: usageDate })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setUsageMessage(result.error);
+      return;
+    }
+
+    setUsageRecords((current) => [result.data, ...current]);
+    setUsageForm((current) => ({ ...current, itemId: "", quantity: "", purpose: "", notes: "" }));
+    setUsageMessage(`Noted ${quantity} ${item.unit} of ${item.name} used by ${sectionLabel(location)}. Stock balances were not changed.`);
+  }
 
   async function loadData(successMessage = "Inventory loaded with saved stock balances.") {
     setBusy(true);
@@ -121,6 +216,10 @@ export function InventoryWorkspace() {
     setReceiptForm((current) => ({
       ...current,
       itemId: nextItems.some((item) => item.id === current.itemId) ? current.itemId : defaultItemId,
+      locationId: nextLocations.some((location) => location.id === current.locationId) ? current.locationId : defaultLocationId
+    }));
+    setUsageForm((current) => ({
+      ...current,
       locationId: nextLocations.some((location) => location.id === current.locationId) ? current.locationId : defaultLocationId
     }));
     setIssueForm((current) => ({
@@ -264,6 +363,25 @@ export function InventoryWorkspace() {
           </div>
         </div>
 
+        {barRestockRows.length > 0 ? (
+          <div role="alert" className="rounded border border-warning/40 bg-warning/10 p-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
+              <h4 className="font-bold">Bar restock needed</h4>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              These Bar Store items are below {BAR_RESTOCK_THRESHOLD} pcs. Transfer stock from the Main Store or receive new stock.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {barRestockRows.map((row) => (
+                <span key={row.itemId} className="rounded border border-warning/40 bg-white px-2 py-1 text-sm font-semibold tabular-nums">
+                  {row.item?.name}: {row.quantity.toFixed(2)} {row.item?.unit} left
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="overflow-hidden rounded border border-border bg-white">
           <div className="flex items-center gap-2 border-b border-border px-4 py-3">
             <Warehouse className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -306,6 +424,147 @@ export function InventoryWorkspace() {
                       <td className="px-4 py-3">
                         <Badge tone={line.low ? "warning" : "success"}>{line.low ? "Reorder" : "In stock"}</Badge>
                       </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="overflow-hidden rounded border border-border bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <NotebookPen className="h-4 w-4 text-primary" aria-hidden="true" />
+              <div>
+                <h4 className="font-bold">Daily Usage Recorder</h4>
+                <p className="text-xs text-muted-foreground">Record only. Bar stock is still deducted automatically by POS sales.</p>
+              </div>
+            </div>
+            <Input
+              aria-label="Usage date"
+              type="date"
+              className="w-auto"
+              value={usageDate}
+              max={todayIso()}
+              onChange={(event) => setUsageDate(event.target.value || todayIso())}
+            />
+          </div>
+
+          <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-3">
+            {usageTotals.map(({ location, entries, value }) => (
+              <div key={location.id} className="rounded border border-border bg-background/70 p-3">
+                <p className="text-sm text-muted-foreground">{sectionLabel(location)}</p>
+                <p className="mt-1 font-bold tabular-nums">{entries} {entries === 1 ? "entry" : "entries"}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">{formatMoney(value)} at average cost</p>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={recordUsage} className="border-b border-border p-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <select
+                aria-label="Usage section"
+                className="h-10 rounded border border-border bg-white px-3 text-sm"
+                value={usageForm.locationId}
+                onChange={(event) => setUsageForm({ ...usageForm, locationId: event.target.value })}
+              >
+                <option value="">Select section</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {sectionLabel(location)}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Usage material"
+                className="h-10 rounded border border-border bg-white px-3 text-sm"
+                value={usageForm.itemId}
+                onChange={(event) => setUsageForm({ ...usageForm, itemId: event.target.value })}
+              >
+                <option value="">Select material</option>
+                {items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} ({item.unit})
+                  </option>
+                ))}
+              </select>
+              <Input
+                aria-label="Quantity used"
+                inputMode="decimal"
+                value={usageForm.quantity}
+                onChange={(event) => setUsageForm({ ...usageForm, quantity: event.target.value })}
+                placeholder="Quantity used"
+              />
+              <Input
+                aria-label="Usage purpose"
+                value={usageForm.purpose}
+                onChange={(event) => setUsageForm({ ...usageForm, purpose: event.target.value })}
+                placeholder="Used for e.g. lunch service"
+              />
+              <Input
+                aria-label="Usage notes"
+                className="sm:col-span-2 lg:col-span-3"
+                value={usageForm.notes}
+                onChange={(event) => setUsageForm({ ...usageForm, notes: event.target.value })}
+                placeholder="Notes (optional)"
+              />
+              <Button disabled={busy || items.length === 0 || locations.length === 0}>
+                <ClipboardList className="h-4 w-4" aria-hidden="true" />
+                Record usage
+              </Button>
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">{usageMessage}</p>
+          </form>
+
+          <div className="flex flex-wrap gap-2 px-4 pt-3">
+            {[{ id: "ALL", label: "All sections" }, ...locations.map((location) => ({ id: location.id, label: sectionLabel(location) }))].map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setUsageFilter(option.id)}
+                className={`rounded border px-3 py-1 text-xs font-semibold ${
+                  usageFilter === option.id ? "border-primary bg-primary text-primary-foreground" : "border-border bg-white text-muted-foreground"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] border-collapse text-sm">
+              <thead className="text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Time</th>
+                  <th className="px-4 py-3 font-semibold">Section</th>
+                  <th className="px-4 py-3 font-semibold">Material</th>
+                  <th className="px-4 py-3 text-right font-semibold">Qty used</th>
+                  <th className="px-4 py-3 font-semibold">Purpose / notes</th>
+                  <th className="px-4 py-3 font-semibold">Recorded by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleUsage.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-8 text-muted-foreground" colSpan={6}>
+                      No usage recorded for {usageDate}.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleUsage.map((record) => (
+                    <tr key={record.id} className="border-t border-border">
+                      <td className="px-4 py-3 tabular-nums">
+                        {new Date(record.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td className="px-4 py-3">{sectionLabel({ name: record.locationName, type: record.locationType })}</td>
+                      <td className="px-4 py-3 font-semibold">{record.itemName}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {record.quantity.toFixed(2)} {record.unit}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p>{record.purpose ?? "-"}</p>
+                        {record.notes ? <p className="text-xs text-muted-foreground">{record.notes}</p> : null}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{record.recordedBy ?? "-"}</td>
                     </tr>
                   ))
                 )}
@@ -522,6 +781,18 @@ export function InventoryWorkspace() {
       </div>
     </div>
   );
+}
+
+function sectionLabel(location: { name: string; type: string }) {
+  if (location.type === "KITCHEN") return "Restaurant (Kitchen)";
+  if (location.type === "BAR") return "Bar";
+  if (location.type === "STORE") return "Main Store";
+  return location.name;
+}
+
+function todayIso() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
 function formatMoney(value: number) {

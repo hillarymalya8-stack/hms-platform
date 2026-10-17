@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Banknote,
   BellRing,
   CheckCircle2,
@@ -31,6 +32,19 @@ import {
   saveCachedPosCatalog,
   syncQueuedOfflineSales
 } from "@/lib/offline-pos";
+
+type BarLowStockItem = {
+  itemId: string;
+  sku: string;
+  name: string;
+  unit: string;
+  quantity: number;
+};
+
+type BarLowStockResponse = {
+  threshold: number;
+  items: BarLowStockItem[];
+};
 
 type PaymentMethod = "CASH" | "CARD" | "MOBILE_MONEY" | "BANK_TRANSFER" | "ROOM_CHARGE";
 type TerminalMode = "offline" | "live";
@@ -184,6 +198,7 @@ export function PosTerminalApp() {
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
   const [email, setEmail] = useState(defaultCashierEmail);
   const [password, setPassword] = useState("");
+  const [barLowStock, setBarLowStock] = useState<BarLowStockResponse | null>(null);
 
   const selectedOutlet = useMemo(
     () => outlets.find((outlet) => outlet.id === selectedOutletId) ?? outlets[0],
@@ -217,6 +232,26 @@ export function PosTerminalApp() {
       setActiveCategory(categories[0]);
     }
   }, [activeCategory, categories]);
+
+  const isBarOutlet = selectedOutlet?.outletType === "BAR";
+
+  useEffect(() => {
+    if (terminalMode !== "live" || !isBarOutlet) {
+      setBarLowStock(null);
+      return;
+    }
+
+    void loadBarLowStock();
+    const timer = window.setInterval(() => void loadBarLowStock(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [terminalMode, isBarOutlet]);
+
+  async function loadBarLowStock() {
+    const result = await apiRequest<BarLowStockResponse>("/pos/bar-low-stock");
+    if (result.ok) {
+      setBarLowStock(result.data);
+    }
+  }
 
   useEffect(() => {
     setOfflineQueueCount(countPendingOfflineSales());
@@ -602,6 +637,9 @@ export function PosTerminalApp() {
     setExternalReference("");
     setSelectedFolioId("");
     setPrepSent(false);
+    if (isBarOutlet) {
+      void loadBarLowStock();
+    }
     setMessage(
       routedTickets.length
         ? `${receiptNumber} saved. ${formatPrepMessage(routedTickets)}`
@@ -792,6 +830,30 @@ export function PosTerminalApp() {
               </div>
             </div>
           </header>
+
+          {isBarOutlet && barLowStock && barLowStock.items.length > 0 ? (
+            <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="font-bold">
+                    Restock needed: {barLowStock.items.length} bar {barLowStock.items.length === 1 ? "item is" : "items are"} below{" "}
+                    {barLowStock.threshold} pcs
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {barLowStock.items.map((item) => (
+                      <span
+                        key={item.itemId}
+                        className="rounded border border-warning/40 bg-white px-2 py-1 text-sm font-semibold tabular-nums"
+                      >
+                        {item.name}: {formatStockQuantity(item.quantity)} {item.unit} left
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <nav aria-label="POS sections" className="flex gap-2 border-b border-border bg-white px-3 py-2 xl:hidden">
             <a href="#pos-products" className="inline-flex min-h-11 flex-1 items-center justify-center rounded border border-border px-3 text-sm font-semibold">Products</a>
@@ -1303,4 +1365,8 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function formatStockQuantity(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
