@@ -2,9 +2,12 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import {
   FolioItemType,
   FolioStatus,
+  InventoryMovementStatus,
+  InventoryMovementType,
   PaymentMethod,
   PaymentStatus,
   PosOrderStatus,
+  PosOutletType,
   PosServiceType,
   Prisma,
   ReservationStatus,
@@ -16,6 +19,9 @@ import { CreatePosOrderDto } from "./dto/create-pos-order.dto";
 import { PayPosOrderDto } from "./dto/pay-pos-order.dto";
 import { assertPaymentReferencePolicy } from "./pos-payment-policy";
 import { calculatePosOrderTotals } from "./pos-totals";
+
+// Bar stock below this many pieces triggers a restock alert on the bar terminal.
+const BAR_RESTOCK_THRESHOLD = 3;
 
 @Injectable()
 export class PosService {
@@ -231,6 +237,30 @@ export class PosService {
       .sort((a, b) => a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }));
   }
 
+  async listBarLowStock(user: UserContext) {
+    const propertyId = this.requireProperty(user);
+    const balances = await this.prisma.inventoryBalance.findMany({
+      where: {
+        quantityOnHand: { lt: BAR_RESTOCK_THRESHOLD },
+        item: { propertyId, active: true },
+        location: { propertyId, code: "BAR", active: true }
+      },
+      include: { item: true },
+      orderBy: { quantityOnHand: "asc" }
+    });
+
+    return {
+      threshold: BAR_RESTOCK_THRESHOLD,
+      items: balances.map((balance) => ({
+        itemId: balance.itemId,
+        sku: balance.item.sku,
+        name: balance.item.name,
+        unit: balance.item.unitOfMeasure,
+        quantity: Number(balance.quantityOnHand)
+      }))
+    };
+  }
+
   async createOrder(user: UserContext, dto: CreatePosOrderDto) {
     const propertyId = this.requireProperty(user);
 
@@ -402,6 +432,10 @@ export class PosService {
           where: { id: dto.tableId },
           data: { status: "ORDER_OPEN" }
         });
+      }
+
+      if (outlet.outletType === PosOutletType.BAR) {
+        await this.deductBarStock(tx, propertyId, order);
       }
 
       await tx.auditLog.create({
@@ -609,6 +643,93 @@ export class PosService {
 
       return updatedOrder;
     });
+  }
+
+  // Bar sales relieve the Bar Store. Menu items are matched to inventory materials by
+  // variant SKU, then product SKU, then name; unmatched items (e.g. cocktails) are skipped.
+  private async deductBarStock(
+    tx: Prisma.TransactionClient,
+    propertyId: string,
+    order: {
+      id: string;
+      orderNumber: string;
+      items: Array<{ quantity: Prisma.Decimal; productVariant: { sku: string; product: { sku: string; name: string } } }>;
+    }
+  ) {
+    const barStore = await tx.inventoryLocation.findFirst({
+      where: { propertyId, code: "BAR", active: true }
+    });
+
+    if (!barStore) {
+      return;
+    }
+
+    const items = await tx.inventoryItem.findMany({
+      where: { propertyId, active: true }
+    });
+    const bySku = new Map(items.map((item) => [item.sku.toUpperCase(), item]));
+    const byName = new Map(items.map((item) => [item.name.trim().toLowerCase(), item]));
+    const now = new Date();
+    const businessDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    for (const line of order.items) {
+      const variant = line.productVariant;
+      const item =
+        bySku.get(variant.sku.toUpperCase()) ??
+        bySku.get(variant.product.sku.toUpperCase()) ??
+        byName.get(variant.product.name.trim().toLowerCase());
+
+      if (!item) {
+        continue;
+      }
+
+      const balance = await tx.inventoryBalance.findUnique({
+        where: {
+          itemId_locationId: {
+            itemId: item.id,
+            locationId: barStore.id
+          }
+        }
+      });
+      const unitCost = balance?.averageCost ?? new Prisma.Decimal(0);
+
+      await tx.inventoryBalance.upsert({
+        where: {
+          itemId_locationId: {
+            itemId: item.id,
+            locationId: barStore.id
+          }
+        },
+        update: {
+          quantityOnHand: {
+            decrement: line.quantity
+          }
+        },
+        create: {
+          itemId: item.id,
+          locationId: barStore.id,
+          quantityOnHand: line.quantity.negated(),
+          averageCost: unitCost
+        }
+      });
+
+      await tx.inventoryMovement.create({
+        data: {
+          propertyId,
+          itemId: item.id,
+          fromLocationId: barStore.id,
+          movementType: InventoryMovementType.ISSUE,
+          status: InventoryMovementStatus.POSTED,
+          sourceType: `Bar sale ${order.orderNumber}`,
+          sourceId: order.id,
+          quantity: line.quantity,
+          unitCost,
+          totalCost: line.quantity.mul(unitCost),
+          businessDate,
+          postedAt: now
+        }
+      });
+    }
   }
 
   private async nextOrderNumber(tx: Prisma.TransactionClient, propertyId: string, date: Date) {

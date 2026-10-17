@@ -4,6 +4,7 @@ import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { CreateInventoryItemDto } from "./dto/create-inventory-item.dto";
 import { PostInventoryMovementDto } from "./dto/post-inventory-movement.dto";
+import { RecordDailyUsageDto } from "./dto/record-daily-usage.dto";
 import { ReceiveInventoryDto } from "./dto/receive-inventory.dto";
 
 @Injectable()
@@ -303,7 +304,69 @@ export class InventoryService {
     });
   }
 
-  private async getItemAndLocation(tx: Prisma.TransactionClient, propertyId: string, itemId: string, locationId: string) {
+  async listDailyUsage(user: UserContext, date?: string) {
+    const propertyId = this.requireProperty(user);
+    const businessDate = parseBusinessDate(date);
+
+    const records = await this.prisma.dailyUsageRecord.findMany({
+      where: { propertyId, businessDate },
+      include: {
+        item: true,
+        location: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return {
+      businessDate: businessDate.toISOString().slice(0, 10),
+      records: records.map(mapUsageRecord)
+    };
+  }
+
+  // Usage notes are a log only: they never touch inventory balances or movements.
+  async recordDailyUsage(user: UserContext, dto: RecordDailyUsageDto) {
+    const propertyId = this.requireProperty(user);
+    const quantity = new Prisma.Decimal(dto.quantity);
+
+    if (quantity.lte(0)) {
+      throw new BadRequestException("Used quantity must be greater than zero.");
+    }
+
+    const { item, location } = await this.getItemAndLocation(this.prisma, propertyId, dto.itemId, dto.locationId);
+    const balance = await this.prisma.inventoryBalance.findUnique({
+      where: {
+        itemId_locationId: {
+          itemId: item.id,
+          locationId: location.id
+        }
+      }
+    });
+    const unitCost = balance?.averageCost ?? new Prisma.Decimal(0);
+
+    const record = await this.prisma.dailyUsageRecord.create({
+      data: {
+        propertyId,
+        itemId: item.id,
+        locationId: location.id,
+        businessDate: parseBusinessDate(dto.businessDate),
+        quantity,
+        unitCost,
+        totalCost: quantity.mul(unitCost),
+        purpose: dto.purpose?.trim() || null,
+        notes: dto.notes?.trim() || null,
+        recordedByUserId: user.userId,
+        recordedByName: user.fullName
+      },
+      include: {
+        item: true,
+        location: true
+      }
+    });
+
+    return mapUsageRecord(record);
+  }
+
+  private async getItemAndLocation(tx: Prisma.TransactionClient | PrismaService, propertyId: string, itemId: string, locationId: string) {
     const [item, location] = await Promise.all([
       tx.inventoryItem.findFirst({
         where: { id: itemId, propertyId, active: true }
@@ -445,6 +508,49 @@ function mapMovement(movement: {
         ? "No P&L impact, stock moved between locations"
         : "Dr Cost of sales/expense, Cr Inventory"
   };
+}
+
+function mapUsageRecord(record: {
+  id: string;
+  businessDate: Date;
+  quantity: Prisma.Decimal;
+  totalCost: Prisma.Decimal;
+  purpose: string | null;
+  notes: string | null;
+  recordedByName: string | null;
+  createdAt: Date;
+  item: InventoryItemRecord;
+  location: InventoryLocationRecord;
+}) {
+  return {
+    id: record.id,
+    businessDate: record.businessDate.toISOString().slice(0, 10),
+    itemId: record.item.id,
+    itemName: record.item.name,
+    unit: record.item.unitOfMeasure,
+    locationId: record.location.id,
+    locationName: record.location.name,
+    locationType: record.location.locationType,
+    quantity: Number(record.quantity),
+    value: Number(record.totalCost),
+    purpose: record.purpose,
+    notes: record.notes,
+    recordedBy: record.recordedByName,
+    recordedAt: record.createdAt.toISOString()
+  };
+}
+
+function parseBusinessDate(value?: string) {
+  if (!value) {
+    return todayDateOnly();
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) {
+    throw new BadRequestException("Business date must be in YYYY-MM-DD format.");
+  }
+
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
 }
 
 function materialCategory(sku: string) {

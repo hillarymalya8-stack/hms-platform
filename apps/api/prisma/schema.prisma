@@ -245,6 +245,7 @@ model Property {
   inventoryItems         InventoryItem[]
   inventoryLocations     InventoryLocation[]
   inventoryMovements     InventoryMovement[]
+  dailyUsageRecords      DailyUsageRecord[]
   journalEntries         JournalEntry[]
   offlineSyncEvents      OfflineSyncEvent[]
   offlineTerminals       OfflineTerminal[]
@@ -918,6 +919,7 @@ model InventoryItem {
 
   balances           InventoryBalance[]
   movements          InventoryMovement[]
+  dailyUsageRecords  DailyUsageRecord[]
   property           Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   purchaseOrderLines PurchaseOrderLine[]
 
@@ -939,6 +941,7 @@ model InventoryLocation {
   balances      InventoryBalance[]
   movementsFrom InventoryMovement[] @relation("InventoryMovementFromLocation")
   movementsTo   InventoryMovement[] @relation("InventoryMovementToLocation")
+  usageRecords  DailyUsageRecord[]
   property      Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@unique([propertyId, code])
@@ -991,6 +994,30 @@ model InventoryMovement {
   @@index([itemId, businessDate])
   @@index([sourceType, sourceId])
   @@map("inventory_movements")
+}
+
+model DailyUsageRecord {
+  id               String   @id @default(uuid()) @db.Uuid
+  propertyId       String   @map("property_id") @db.Uuid
+  itemId           String   @map("item_id") @db.Uuid
+  locationId       String   @map("location_id") @db.Uuid
+  businessDate     DateTime @map("business_date") @db.Date
+  quantity         Decimal  @db.Decimal(18, 4)
+  unitCost         Decimal  @default(0) @map("unit_cost") @db.Decimal(18, 4)
+  totalCost        Decimal  @default(0) @map("total_cost") @db.Decimal(18, 4)
+  purpose          String?
+  notes            String?
+  recordedByUserId String?  @map("recorded_by_user_id") @db.Uuid
+  recordedByName   String?  @map("recorded_by_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  item     InventoryItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  property Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, businessDate])
+  @@index([locationId, businessDate])
+  @@map("daily_usage_records")
 }
 
 model Supplier {
