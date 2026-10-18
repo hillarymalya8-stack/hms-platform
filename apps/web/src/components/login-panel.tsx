@@ -76,8 +76,8 @@ export function LoginPanel() {
       </div>
 
       <label className="block space-y-1.5">
-        <span className="text-sm font-medium">Email</span>
-        <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
+        <span className="text-sm font-medium">Username or email</span>
+        <Input value={email} onChange={(event) => setEmail(event.target.value)} type="text" autoCapitalize="none" />
       </label>
 
       <label className="block space-y-1.5">

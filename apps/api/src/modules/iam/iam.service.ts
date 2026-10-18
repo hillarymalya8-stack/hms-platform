@@ -31,6 +31,14 @@ export class IamService {
       }
     }
 
+    const userPermissions = await this.prisma.userPermission.findMany({
+      where: { userId },
+      include: { permission: true }
+    });
+    for (const userPermission of userPermissions) {
+      permissionCodes.add(userPermission.permission.code);
+    }
+
     return [...permissionCodes].sort();
   }
 

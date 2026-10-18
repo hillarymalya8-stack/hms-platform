@@ -313,6 +313,8 @@ model User {
   organizationId    String       @map("organization_id") @db.Uuid
   defaultPropertyId String?      @map("default_property_id") @db.Uuid
   email             String       @unique
+  username          String?      @unique
+  homePath          String?      @map("home_path")
   passwordHash      String       @map("password_hash")
   fullName          String       @map("full_name")
   mfaEnabled        Boolean      @default(false) @map("mfa_enabled")
@@ -329,6 +331,7 @@ model User {
   openedBusinessDates    BusinessDate[]          @relation("OpenedBusinessDates")
   persistenceTransitions PersistenceTransition[]
   sessions               UserSession[]
+  userPermissions        UserPermission[]
   userRoles              UserRole[]
 
   @@index([organizationId, status])
@@ -379,6 +382,7 @@ model Permission {
   createdAt DateTime @default(now()) @map("created_at")
 
   rolePermissions RolePermission[]
+  userPermissions UserPermission[]
 
   @@index([module, action])
   @@map("permissions")
@@ -409,6 +413,19 @@ model RolePermission {
 
   @@id([roleId, permissionId])
   @@map("role_permissions")
+}
+
+// Access an administrator ticked for one person, on top of (or instead of) any role.
+model UserPermission {
+  userId       String   @map("user_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  grantedAt    DateTime @default(now()) @map("granted_at")
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@map("user_permissions")
 }
 
 model BusinessDate {

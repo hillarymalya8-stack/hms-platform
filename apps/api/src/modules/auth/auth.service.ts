@@ -16,17 +16,18 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto, metadata: { ipAddress?: string; userAgent?: string }) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase() }
+    const identifier = dto.email.trim().toLowerCase();
+    const user = await this.prisma.user.findFirst({
+      where: { OR: [{ email: identifier }, { username: identifier }] }
     });
 
     if (!user || user.status !== "ACTIVE") {
-      throw new UnauthorizedException("Invalid email or password.");
+      throw new UnauthorizedException("Invalid username or password.");
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordMatches) {
-      throw new UnauthorizedException("Invalid email or password.");
+      throw new UnauthorizedException("Invalid username or password.");
     }
 
     const sessionId = randomUUID();
@@ -82,9 +83,11 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
+        username: user.username,
         fullName: user.fullName,
         organizationId: user.organizationId,
         defaultPropertyId: user.defaultPropertyId,
+        homePath: user.homePath,
         permissions
       }
     };
