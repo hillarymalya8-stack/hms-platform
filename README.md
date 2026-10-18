@@ -14,7 +14,8 @@ This repository contains the integrated hotel operations platform for front offi
 - Role-specific local routes: `/dashboard`, `/finance`, `/front-office`, `/inventory`, `/purchasing`, `/reports`, `/administration`, `/pos`, and `/pos-terminal`.
 - Staff users are registered from Administration. Admin assigns the role/access level, and that role controls which system opens after login and which modules are blocked.
 - Local POS terminal route: `http://127.0.0.1:3000/pos-terminal`.
-- Netlify is the production web host for the dashboard, POS terminal, prep monitor, and login UI; the API connects through `NEXT_PUBLIC_API_URL`, and production data must use hosted Postgres rather than the local Docker database.
+- Netlify hosts everything in production: the dashboard, POS terminal, prep monitor, and login UI, plus the API as a Netlify Function at `/api/*`, with data in Netlify Database (managed Postgres).
+- A new deployment opens a one-time **Set up your hotel** screen that creates the hotel and its first Super Administrator.
 - Access levels are seeded from shared role definitions so each user level controls what they can and cannot open.
 
 ## POS Printing and Preparation Routing

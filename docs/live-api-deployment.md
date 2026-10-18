@@ -1,4 +1,6 @@
-# Live API Deployment
+# Live API Deployment (alternative host)
+
+The default production setup runs the API inside Netlify itself — see `docs/netlify-deployment.md`. Use this guide only if you want the API on a separate Node host.
 
 This project is ready to run the HMS backend as a hosted Node API with Postgres.
 
@@ -47,7 +49,7 @@ The API start command runs production migrations with:
 npm run db:deploy -w @hms/api
 ```
 
-Run the seed once after the database is created:
+For a production hotel, skip the seed and use the first-run setup screen instead. The seed creates sample development data:
 
 ```bash
 npm run db:seed -w @hms/api
@@ -61,7 +63,6 @@ Set these in Netlify for the web app:
 
 ```text
 NEXT_PUBLIC_API_URL=https://your-api-domain.com/api
-NEXT_PUBLIC_ENABLE_DEMO_AUTH=false
 ```
 
-After this, demo login will be disabled and the system will use the live API/database.
+The web app then sends every request to that API instead of the built-in `/api` function.

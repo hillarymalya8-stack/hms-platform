@@ -8,7 +8,19 @@
   NETLIFY_NEXT_SKEW_PROTECTION = "true"
 
 [functions]
+  directory = "netlify/functions"
   node_bundler = "esbuild"
+
+# The HMS API (NestJS + Prisma) is compiled with tsc during the build; nft keeps its decorator
+# metadata intact and ships the Prisma query engine built for the Netlify Functions runtime.
+[functions.api]
+  node_bundler = "nft"
+  included_files = [
+    "apps/api/dist/**",
+    "node_modules/.prisma/client/**",
+    "!node_modules/.prisma/client/libquery_engine-debian-*",
+    "node_modules/@prisma/client/**"
+  ]
 
 [[headers]]
   for = "/*"

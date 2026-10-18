@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { Request } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { PrismaService } from "../prisma/prisma.service";
 import { IamService } from "../../modules/iam/iam.service";
+import { JwtSecretService } from "./jwt-secret.service";
 import { IS_PUBLIC_KEY } from "./public.decorator";
 import { UserContext } from "./user-context";
 
@@ -19,8 +19,8 @@ type HmsJwtPayload = JwtPayload & {
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
-    private readonly config: ConfigService,
     private readonly iam: IamService,
+    private readonly jwtSecret: JwtSecretService,
     private readonly prisma: PrismaService,
     private readonly reflector: Reflector
   ) {}
@@ -42,7 +42,7 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException("Missing bearer token.");
     }
 
-    const secret = this.config.get<string>("JWT_SECRET") ?? "change-this-before-production";
+    const secret = await this.jwtSecret.getSecret();
     let payload: HmsJwtPayload;
 
     try {

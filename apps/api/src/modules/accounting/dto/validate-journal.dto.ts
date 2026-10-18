@@ -1,7 +1,7 @@
 import { Type } from "class-transformer";
 import { ArrayMinSize, IsArray, IsOptional, IsString, ValidateNested } from "class-validator";
 
-class ValidateJournalLineDto {
+export class ValidateJournalLineDto {
   @IsString()
   accountCode!: string;
 

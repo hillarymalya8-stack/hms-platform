@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
-import { getApiBaseUrl, isDemoAuthEnabled, loginWithDemoCredentials, readSession, saveSession, type LoginResponse } from "@/lib/auth";
+import { getApiBaseUrl, readSession, saveSession, type LoginResponse } from "@/lib/auth";
 import {
   enqueueOfflineSale,
   onOfflineQueueChanged,
@@ -155,7 +155,6 @@ type ChargeableRoom = {
   };
 };
 
-const defaultCashierEmail = "cashier@hotel.local";
 const preferredOutletKey = "hms_pos_preferred_outlet";
 const preferredTerminalKey = "hms_pos_preferred_terminal";
 
@@ -176,7 +175,6 @@ const prepStations: Array<{ name: PrepStation | "Receipt Printer"; detail: strin
 
 export function PosTerminalApp() {
   const apiUrl = useMemo(() => getApiBaseUrl(), []);
-  const demoMode = useMemo(() => isDemoAuthEnabled(), []);
   const [activeCategory, setActiveCategory] = useState("Food");
   const [products, setProducts] = useState<TerminalProduct[]>([]);
   const [outlets, setOutlets] = useState<PosOutlet[]>([]);
@@ -196,7 +194,7 @@ export function PosTerminalApp() {
   const [busy, setBusy] = useState(false);
   const [syncingOffline, setSyncingOffline] = useState(false);
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
-  const [email, setEmail] = useState(defaultCashierEmail);
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [barLowStock, setBarLowStock] = useState<BarLowStockResponse | null>(null);
 
@@ -281,30 +279,6 @@ export function PosTerminalApp() {
     event.preventDefault();
     setBusy(true);
     setMessage("Opening cashier session...");
-
-    if (demoMode) {
-      const result = loginWithDemoCredentials(email, password);
-
-      if (!result) {
-        setMessage("Cashier login was rejected.");
-        setBusy(false);
-        return;
-      }
-
-      if (!result.user.permissions.includes("pos.view")) {
-        setTerminalMode("offline");
-        setProducts([]);
-        setMessage("This credential is not allowed to open the POS terminal.");
-        setBusy(false);
-        return;
-      }
-
-      saveSession(result);
-      setTerminalMode("offline");
-      loadCachedCatalog(`Signed in as ${result.user.fullName}. Netlify demo mode is offline-only.`);
-      setBusy(false);
-      return;
-    }
 
     try {
       const response = await fetch(`${apiUrl}/auth/login`, {

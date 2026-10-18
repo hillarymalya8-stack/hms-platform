@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Database, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { getApiBaseUrl, isDemoAuthEnabled } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/auth";
 
 type HealthResponse = {
   status: "ok" | "degraded";
@@ -20,19 +20,15 @@ type StatusState =
 
 export function SystemStatus() {
   const apiUrl = useMemo(() => getApiBaseUrl(), []);
-  const demoMode = useMemo(() => isDemoAuthEnabled(), []);
   const [status, setStatus] = useState<StatusState>({ state: "checking" });
 
   useEffect(() => {
-    if (demoMode) {
-      return;
-    }
-
     let cancelled = false;
 
     async function loadStatus() {
       try {
         const response = await fetch(`${apiUrl}/health`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Health check returned ${response.status}`);
         const body = (await response.json()) as HealthResponse;
 
         if (!cancelled) {
@@ -40,7 +36,7 @@ export function SystemStatus() {
         }
       } catch {
         if (!cancelled) {
-          setStatus({ state: "offline", message: "API is not reachable from this browser." });
+          setStatus({ state: "offline", message: "The hotel system service is not reachable from this device right now." });
         }
       }
     }
@@ -52,22 +48,7 @@ export function SystemStatus() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [apiUrl, demoMode]);
-
-  if (demoMode) {
-    return (
-      <div className="grid gap-3 rounded border border-warning/50 bg-warning/10 p-4 md:grid-cols-[auto_1fr_auto] md:items-center">
-        <Server className="h-5 w-5 text-warning" aria-hidden="true" />
-        <div>
-          <p className="font-bold">Netlify demo mode</p>
-          <p className="text-sm text-muted-foreground">
-            The web system is open without a live API. Demo login works here; live hotel records need an API URL later.
-          </p>
-        </div>
-        <Badge tone="warning">Demo</Badge>
-      </div>
-    );
-  }
+  }, [apiUrl]);
 
   if (status.state === "checking") {
     return (
@@ -87,8 +68,8 @@ export function SystemStatus() {
       <div className="grid gap-3 rounded border border-danger/40 bg-danger/10 p-4 md:grid-cols-[auto_1fr_auto] md:items-center">
         <AlertTriangle className="h-5 w-5 text-danger" aria-hidden="true" />
         <div>
-          <p className="font-bold">Backend connection required</p>
-          <p className="text-sm text-muted-foreground">{status.message} Start the API, database, and Redis before using live hotel records.</p>
+          <p className="font-bold">System service unreachable</p>
+          <p className="text-sm text-muted-foreground">{status.message} Check the internet connection and try again in a moment.</p>
         </div>
         <Badge tone="danger">Offline</Badge>
       </div>
@@ -112,8 +93,8 @@ export function SystemStatus() {
         <p className="font-bold">{databaseReady ? "Live system connected" : "Database connection required"}</p>
         <p className="text-sm text-muted-foreground">
           {databaseReady
-            ? "API and database are available for saved hotel operations."
-            : "The API is running, but PostgreSQL is not connected, so saved records are unavailable."}
+            ? "All hotel records are saved to the live database."
+            : "The system service is running, but the database is not responding, so saved records are unavailable."}
         </p>
       </div>
       <Badge tone={databaseReady ? "success" : "warning"}>{databaseReady ? "Operational" : "Setup needed"}</Badge>

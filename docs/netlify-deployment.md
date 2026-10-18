@@ -1,91 +1,60 @@
 # Netlify Deployment
 
-The production target is Netlify-first:
+The whole system runs on Netlify:
 
-- Netlify hosts the web dashboard, POS terminal, prep monitor, and role-based login UI.
-- The database must be hosted Postgres, not the local Docker database.
-- The current safest deployment keeps the NestJS API on a Node backend runtime and points Netlify to it with `NEXT_PUBLIC_API_URL`.
-- A later phase can move API routes into Netlify Functions, using the shared API bootstrap in `apps/api/src/create-app.ts`.
+- The web dashboard, POS terminal, prep monitor, and login UI are the Next.js app in `apps/web`.
+- The NestJS API in `apps/api` runs as a Netlify Function (`netlify/functions/api.mjs`) and answers every `/api/*` request on the same site.
+- Data is stored in Netlify Database (managed Postgres). Each deploy gets its connection through `NETLIFY_DB_URL`; deploy previews use their own database branch, production uses the production database.
+- Database migrations live in `netlify/database/migrations` and are applied by Netlify during deploy. Keep `apps/api/prisma/migrations` in step with them (same folder name and SQL) so local Prisma workflows match.
 
-## Netlify Site
+No separate API server, database host, or Redis is needed.
 
-The included `netlify.toml` sets the Netlify web build:
+## Build
 
-- Build command: `npm run build:netlify`
+`netlify.toml` sets:
+
+- Build command: `npm run build:netlify` (builds `@hms/shared`, generates the Prisma client and compiles the API with `tsc`, then builds the web app)
 - Publish directory: `apps/web/.next`
-- Node version: `20`
-- Next skew protection: `NETLIFY_NEXT_SKEW_PROTECTION=true`
-- Browser security headers for all routes
+- Functions directory: `netlify/functions`; the `api` function is bundled with `nft` so Nest's decorator metadata and the Prisma query engine (`rhel-openssl-3.0.x`) are shipped intact.
 
-Add these environment variables in Netlify:
+## First run
 
-```bash
-NEXT_PUBLIC_ENABLE_DEMO_AUTH=true
-NEXT_PUBLIC_API_URL=https://your-api-host.example.com/api
-NEXT_TELEMETRY_DISABLED=1
-NETLIFY_NEXT_SKEW_PROTECTION=true
-```
+A new database has no hotel and no staff accounts. Open the site and the login page shows **Set up your hotel**:
 
-For a web-only Netlify demo, keep `NEXT_PUBLIC_ENABLE_DEMO_AUTH=true` and leave `NEXT_PUBLIC_API_URL` unset. Seeded demo users such as `admin@hotel.local` can sign in with `ChangeMe123!`, and the site will not show the backend-offline warning.
+1. Enter the hotel name, currency, and the first administrator's name, email and password.
+2. Setup creates the hotel, Main/Bar/Restaurant stores, Bar and Restaurant POS outlets with terminals, Food and Drinks menu categories, the chart of accounts, today's business date and the current financial period, every access level, and the Super Administrator account, then signs that administrator in.
+3. Setup can only run once; afterwards the page shows the normal staff login.
 
-For a live hotel system, set `NEXT_PUBLIC_ENABLE_DEMO_AUTH=false`, deploy the API separately, and set `NEXT_PUBLIC_API_URL` to that API `/api` URL.
+Then, from Administration: add staff accounts, rooms and room types, and the POS menu with prices. From Inventory: add materials and receive opening stock.
 
-If the API is later moved into Netlify Functions on the same Netlify site, change:
+To stop anyone else from claiming a fresh deployment before you do, set `HMS_SETUP_KEY` in the Netlify environment variables; setup will then ask for that key.
 
-```bash
-NEXT_PUBLIC_API_URL=/api
-```
+## Environment variables
 
-## Database
-
-Production must use hosted Postgres. You can use Netlify Database when the project is ready for the Netlify database workflow, or another hosted Postgres provider if you want the API deployed first with fewer code changes.
-
-Do not use:
+None are required. Optional:
 
 ```bash
-postgresql://hms:hms_password@localhost:5432/hms_platform?schema=public
-```
-
-That URL is only for local Docker.
-
-## Backend API
-
-Current deployment shape:
-
-1. Deploy the NestJS API to a Node backend runtime.
-2. Set the API production variables from `.env.production-api.example`.
-3. Use the hosted Postgres `DATABASE_URL`.
-4. Set `WEB_ORIGIN` to the Netlify site URL and custom domain.
-5. Set Netlify `NEXT_PUBLIC_API_URL` to the API `/api` URL.
-
-Required API variables:
-
-```bash
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DB?schema=public
-REDIS_URL=redis://HOST:6379
-JWT_SECRET=replace-with-a-long-random-secret
+HMS_SETUP_KEY=one-time-key-for-first-run-setup
+JWT_SECRET=at-least-32-random-characters   # otherwise a random secret is generated and stored in the database
 JWT_EXPIRES_IN=8h
-API_PORT=4000
-WEB_ORIGIN=https://your-site.netlify.app,https://yourhotel.com
+NEXT_PUBLIC_API_URL=https://other-host.example.com/api   # only to point the web app at an API hosted elsewhere
 ```
 
-When using Netlify Database, Netlify may expose the connection string as `NETLIFY_DB_URL`. The API accepts that too and will copy it into `DATABASE_URL` at startup if `DATABASE_URL` is missing.
+`NEXT_PUBLIC_ENABLE_DEMO_AUTH` and `NEXT_PUBLIC_DEMO_PASSWORD` are no longer used; demo sign-in has been removed.
 
-## Netlify Functions Phase
+## Local development
 
-Netlify Functions can host server-side API routes, and Netlify Database can provide managed Postgres. Moving the full API there is a separate phase because this system currently runs as a NestJS server with Prisma, JWT, CORS, and many modules.
-
-Before moving the API into Netlify Functions:
-
-- Add the Netlify function entrypoint.
-- Confirm Prisma generation and migrations run in the Netlify build.
-- Set production `DATABASE_URL` from Netlify Database.
-- Move `/api/*` requests to the function route.
-- Test login, POS orders, room charges, reports, inventory, and admin permissions in the deployed environment.
+```bash
+docker compose up -d            # local Postgres
+npm run db:migrate              # apply Prisma migrations locally
+npm run db:seed                 # optional sample data for development only
+npm run dev:api                 # http://localhost:4000/api
+NEXT_PUBLIC_API_URL=http://localhost:4000/api npm run dev:web
+```
 
 ## Permission Levels
 
-Seeded access levels are created from `packages/shared/src/access-levels.ts`.
+Access levels are created from `packages/shared/src/access-levels.ts` during first-run setup.
 
 - Level 100: Super Administrator
 - Level 80: General Manager
@@ -96,14 +65,6 @@ Seeded access levels are created from `packages/shared/src/access-levels.ts`.
 - Level 35: Storekeeper
 - Level 20: Report Viewer
 
-The POS terminal defaults to the Level 40 cashier account, which can create/pay POS orders but cannot open accounting endpoints.
-
 ## Domain
 
-You can launch first on the Netlify subdomain:
-
-```text
-https://your-site.netlify.app
-```
-
-After buying a domain, point the DNS to Netlify and add the custom domain to `WEB_ORIGIN` for the API.
+The site runs on the Netlify subdomain. After adding a custom domain in Netlify, nothing else needs to change because the API is served from the same site.

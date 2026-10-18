@@ -1,263 +1,370 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Banknote,
   BarChart3,
+  BookPlus,
   CalendarCheck,
   CheckCircle2,
   FileText,
   Landmark,
   LockKeyhole,
-  RefreshCcw
+  Plus,
+  RefreshCcw,
+  Trash2
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InvoiceWorkspace } from "@/components/invoice-workspace";
 import { Input } from "@/components/ui/input";
+import { apiRequest } from "@/lib/api-client";
+import { readSession } from "@/lib/auth";
 
-type AccountType = "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "EXPENSE";
+type AccountType = "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "COST_OF_SALES" | "EXPENSE";
+
+const accountTypes: Array<{ value: AccountType; label: string }> = [
+  { value: "ASSET", label: "Asset" },
+  { value: "LIABILITY", label: "Liability" },
+  { value: "EQUITY", label: "Equity" },
+  { value: "REVENUE", label: "Revenue" },
+  { value: "COST_OF_SALES", label: "Cost of sales" },
+  { value: "EXPENSE", label: "Expense" }
+];
 
 type Account = {
-  code: string;
-  name: string;
-  type: AccountType;
-};
-
-type TrialLine = {
+  id: string;
   accountCode: string;
-  debit: number;
-  credit: number;
+  accountName: string;
+  accountType: AccountType;
+  isControlAccount: boolean;
+  active: boolean;
 };
 
-type PendingJournal = {
+type TrialBalanceRow = {
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  accountType: AccountType | null;
+  totalDebit: string;
+  totalCredit: string;
+  debitBalance: string;
+  creditBalance: string;
+};
+
+type TrialBalance = {
+  from: string | null;
+  to: string | null;
+  generatedAt: string;
+  rows: TrialBalanceRow[];
+  totals: { totalDebit: string; totalCredit: string; debitBalance: string; creditBalance: string };
+  balanced: boolean;
+};
+
+type JournalStatus = "DRAFT" | "POSTED" | "REVERSED" | "VOID";
+
+type Journal = {
   id: string;
-  source: string;
-  description: string;
-  debitAccount: string;
-  creditAccount: string;
-  amount: number;
-  status: "PENDING" | "POSTED";
+  entryNumber: string;
+  sourceType: string;
+  sourceNumber: string | null;
+  status: JournalStatus;
+  description: string | null;
+  createdAt: string;
+  postedAt: string | null;
+  totalDebit: string;
+  totalCredit: string;
+  lines: Array<{
+    id: string;
+    accountCode: string;
+    accountName: string;
+    debitAmount: string;
+    creditAmount: string;
+    description: string | null;
+  }>;
 };
 
-type FinanceEvent = {
+type BusinessDateRecord = {
   id: string;
-  reference: string;
-  action: string;
-  detail: string;
+  businessDate: string;
+  status: "OPEN" | "CLOSED" | "REOPENED";
+  openedAt: string;
+  openedBy: string | null;
+  closedAt: string | null;
+  closedBy: string | null;
 };
 
-const demoAccounts: Account[] = [
-  { code: "1100", name: "Cash on Hand", type: "ASSET" },
-  { code: "1110", name: "Bank Account", type: "ASSET" },
-  { code: "1200", name: "Accounts Receivable", type: "ASSET" },
-  { code: "1300", name: "Inventory", type: "ASSET" },
-  { code: "2100", name: "Accounts Payable", type: "LIABILITY" },
-  { code: "2200", name: "Tax Payable", type: "LIABILITY" },
-  { code: "3000", name: "Owner Equity", type: "EQUITY" },
-  { code: "4100", name: "Room Revenue", type: "REVENUE" },
-  { code: "4200", name: "Restaurant Revenue", type: "REVENUE" },
-  { code: "5100", name: "Cost of Sales", type: "EXPENSE" },
-  { code: "6100", name: "Operating Expenses", type: "EXPENSE" }
-];
+type BusinessDateResponse = {
+  current: BusinessDateRecord;
+  draftJournalCount: number;
+  history: BusinessDateRecord[];
+};
 
-const demoTrialBalance: TrialLine[] = [
-  { accountCode: "1100", debit: 2200, credit: 0 },
-  { accountCode: "1110", debit: 8400, credit: 0 },
-  { accountCode: "1200", debit: 1550, credit: 0 },
-  { accountCode: "1300", debit: 3280, credit: 0 },
-  { accountCode: "2100", debit: 0, credit: 2100 },
-  { accountCode: "2200", debit: 0, credit: 890 },
-  { accountCode: "3000", debit: 0, credit: 4100 },
-  { accountCode: "4100", debit: 0, credit: 5600 },
-  { accountCode: "4200", debit: 0, credit: 2840 },
-  { accountCode: "5100", debit: 1980, credit: 0 },
-  { accountCode: "6100", debit: 2120, credit: 0 }
-];
+type JournalFormLine = { key: string; accountCode: string; debitAmount: string; creditAmount: string };
 
-const demoPendingJournals: PendingJournal[] = [
-  {
-    id: "journal-pos",
-    source: "POS",
-    description: "Restaurant paid sales batch",
-    debitAccount: "1100",
-    creditAccount: "4200",
-    amount: 640,
-    status: "PENDING"
-  },
-  {
-    id: "journal-room",
-    source: "Front Office",
-    description: "Checked-in room revenue accrual",
-    debitAccount: "1200",
-    creditAccount: "4100",
-    amount: 380,
-    status: "PENDING"
-  },
-  {
-    id: "journal-ap",
-    source: "Purchasing",
-    description: "Supplier invoice posted to AP",
-    debitAccount: "1300",
-    creditAccount: "2100",
-    amount: 420,
-    status: "PENDING"
-  }
-];
+type JournalFilter = "DRAFT" | "POSTED" | "ALL";
+
+const amountPattern = /^\d+(\.\d{1,4})?$/;
 
 export function FinanceWorkspace() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [trialBalance, setTrialBalance] = useState<TrialLine[]>([]);
-  const [pendingJournals, setPendingJournals] = useState<PendingJournal[]>([]);
-  const [events, setEvents] = useState<FinanceEvent[]>([]);
-  const [businessDate, setBusinessDate] = useState("2026-08-31");
-  const [closed, setClosed] = useState(false);
-  const [message, setMessage] = useState("Load finance data to review the ledger.");
-  const [adjustmentForm, setAdjustmentForm] = useState({
-    description: "Bank charges adjustment",
-    debitAccount: "6100",
-    creditAccount: "1110",
-    amount: "35.00"
+  const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
+  const [journals, setJournals] = useState<Journal[]>([]);
+  const [businessDate, setBusinessDate] = useState<BusinessDateResponse | null>(null);
+  const [businessDateError, setBusinessDateError] = useState("");
+  const [journalFilter, setJournalFilter] = useState<JournalFilter>("DRAFT");
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("Loading finance data...");
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [accountForm, setAccountForm] = useState({
+    accountCode: "",
+    accountName: "",
+    accountType: "ASSET" as AccountType,
+    isControlAccount: false
   });
+  const [journalForm, setJournalForm] = useState({ memo: "", reference: "" });
+  const [journalLines, setJournalLines] = useState<JournalFormLine[]>([newFormLine(), newFormLine()]);
 
-  const activeAccounts = accounts.length ? accounts : demoAccounts;
+  useEffect(() => {
+    setPermissions(readSession()?.user.permissions ?? []);
+  }, []);
 
-  const enrichedTrialBalance = useMemo(
-    () =>
-      trialBalance.map((line) => ({
-        ...line,
-        account: activeAccounts.find((account) => account.code === line.accountCode)
-      })),
-    [activeAccounts, trialBalance]
-  );
+  const can = useCallback((code: string) => permissions.includes(code), [permissions]);
 
-  const totals = enrichedTrialBalance.reduce(
-    (sum, line) => ({
-      debit: sum.debit + line.debit,
-      credit: sum.credit + line.credit
-    }),
-    { debit: 0, credit: 0 }
-  );
+  const loadJournals = useCallback(async (filter: JournalFilter) => {
+    const query = filter === "ALL" ? "" : `?status=${filter}`;
+    const result = await apiRequest<Journal[]>(`/accounting/journals${query}`);
+    if (!result.ok) return result.error;
+    setJournals(result.data);
+    return null;
+  }, []);
 
-  const profitAndLoss = enrichedTrialBalance.reduce(
-    (sum, line) => {
-      if (line.account?.type === "REVENUE") {
-        return { ...sum, revenue: sum.revenue + line.credit - line.debit };
-      }
-      if (line.account?.type === "EXPENSE") {
-        return { ...sum, expense: sum.expense + line.debit - line.credit };
-      }
-      return sum;
-    },
-    { revenue: 0, expense: 0 }
-  );
+  const loadTrialBalance = useCallback(async (from: string, to: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const query = params.toString();
+    const result = await apiRequest<TrialBalance>(`/accounting/trial-balance${query ? `?${query}` : ""}`);
+    if (!result.ok) return result.error;
+    setTrialBalance(result.data);
+    return null;
+  }, []);
 
-  const balanceSheet = enrichedTrialBalance.reduce(
-    (sum, line) => {
-      if (line.account?.type === "ASSET") {
-        return { ...sum, assets: sum.assets + line.debit - line.credit };
-      }
-      if (line.account?.type === "LIABILITY") {
-        return { ...sum, liabilities: sum.liabilities + line.credit - line.debit };
-      }
-      if (line.account?.type === "EQUITY") {
-        return { ...sum, equity: sum.equity + line.credit - line.debit };
-      }
-      return sum;
-    },
-    { assets: 0, liabilities: 0, equity: 0 }
-  );
-
-  const netProfit = profitAndLoss.revenue - profitAndLoss.expense;
-  const pendingTotal = pendingJournals
-    .filter((journal) => journal.status === "PENDING")
-    .reduce((sum, journal) => sum + journal.amount, 0);
-  const balanced = Math.abs(totals.debit - totals.credit) < 0.01;
-
-  function loadData() {
-    setAccounts([...demoAccounts]);
-    setTrialBalance(demoTrialBalance.map((line) => ({ ...line })));
-    setPendingJournals(demoPendingJournals.map((journal) => ({ ...journal })));
-    setEvents([]);
-    setClosed(false);
-    setMessage("Finance ledger loaded.");
-  }
-
-  function postPendingJournals() {
-    const pending = pendingJournals.filter((journal) => journal.status === "PENDING");
-    if (pending.length === 0) {
-      setMessage("There are no pending journals to post.");
-      return;
+  const loadBusinessDate = useCallback(async () => {
+    const result = await apiRequest<BusinessDateResponse>("/accounting/business-date");
+    if (!result.ok) {
+      setBusinessDate(null);
+      setBusinessDateError(result.error);
+      return result.error;
     }
+    setBusinessDate(result.data);
+    setBusinessDateError("");
+    return null;
+  }, []);
 
-    setTrialBalance((current) => {
-      const next = current.map((line) => ({ ...line }));
-      pending.forEach((journal) => {
-        addAmount(next, journal.debitAccount, "debit", journal.amount);
-        addAmount(next, journal.creditAccount, "credit", journal.amount);
-      });
-      return next;
-    });
-    setPendingJournals((current) => current.map((journal) => ({ ...journal, status: "POSTED" })));
-    setEvents((current) => [
-      {
-        id: createLocalId("event"),
-        reference: `GL-${businessDate}`,
-        action: "Posted journal batch",
-        detail: `${pending.length} source journals posted into the general ledger.`
-      },
-      ...current
-    ]);
-    setMessage(`${pending.length} source journals posted. Trial balance remains balanced.`);
-  }
+  const loadAll = useCallback(
+    async (filter: JournalFilter, from: string, to: string) => {
+      setLoading(true);
+      const accountsResult = await apiRequest<Account[]>("/accounting/accounts");
+      if (accountsResult.ok) setAccounts(accountsResult.data);
 
-  function createAdjustment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const amount = Number(adjustmentForm.amount);
-    const debitAccount = activeAccounts.find((account) => account.code === adjustmentForm.debitAccount);
-    const creditAccount = activeAccounts.find((account) => account.code === adjustmentForm.creditAccount);
+      const errors = [
+        accountsResult.ok ? null : accountsResult.error,
+        ...(await Promise.all([loadTrialBalance(from, to), loadJournals(filter), loadBusinessDate()]))
+      ].filter((error): error is string => Boolean(error));
 
-    if (!debitAccount || !creditAccount || amount <= 0 || debitAccount.code === creditAccount.code) {
-      setMessage("Choose different debit/credit accounts and a valid adjustment amount.");
-      return;
-    }
+      setLoading(false);
+      if (errors.length) {
+        setMessage(errors[0]);
+      } else if (accountsResult.ok && accountsResult.data.length === 0) {
+        setMessage("No chart of accounts is set up for this property yet. Add accounts to start posting journals.");
+      } else {
+        setMessage("Finance data is up to date.");
+      }
+    },
+    [loadBusinessDate, loadJournals, loadTrialBalance]
+  );
 
-    const journal: PendingJournal = {
-      id: createLocalId("journal"),
-      source: "Manual",
-      description: adjustmentForm.description,
-      debitAccount: debitAccount.code,
-      creditAccount: creditAccount.code,
-      amount,
-      status: "PENDING"
+  useEffect(() => {
+    void loadAll("DRAFT", "", "");
+  }, [loadAll]);
+
+  const summary = useMemo(() => {
+    const rows = trialBalance?.rows ?? [];
+    const net = (row: TrialBalanceRow) => Number(row.totalDebit) - Number(row.totalCredit);
+    const sumBy = (types: AccountType[], sign: 1 | -1) =>
+      rows.filter((row) => row.accountType && types.includes(row.accountType)).reduce((sum, row) => sum + sign * net(row), 0);
+
+    const revenue = sumBy(["REVENUE"], -1);
+    const costOfSales = sumBy(["COST_OF_SALES"], 1);
+    const expenses = sumBy(["EXPENSE"], 1);
+    return {
+      revenue,
+      costOfSales,
+      expenses,
+      netProfit: revenue - costOfSales - expenses,
+      assets: sumBy(["ASSET"], 1),
+      liabilities: sumBy(["LIABILITY"], -1),
+      equity: sumBy(["EQUITY"], -1),
+      revenueRows: rows.filter((row) => row.accountType === "REVENUE"),
+      expenseRows: rows.filter((row) => row.accountType === "COST_OF_SALES" || row.accountType === "EXPENSE")
     };
-    setPendingJournals((current) => [journal, ...current]);
-    setMessage("Manual adjustment added to pending journals.");
+  }, [trialBalance]);
+
+  const draftJournals = journals.filter((journal) => journal.status === "DRAFT");
+  const draftCount = businessDate?.draftJournalCount ?? draftJournals.length;
+
+  const formTotals = useMemo(() => {
+    const toCents = (value: string) => (amountPattern.test(value.trim()) ? Math.round(Number(value) * 100) : 0);
+    const debit = journalLines.reduce((sum, line) => sum + toCents(line.debitAmount), 0);
+    const credit = journalLines.reduce((sum, line) => sum + toCents(line.creditAmount), 0);
+    return { debit: debit / 100, credit: credit / 100, balanced: debit > 0 && debit === credit };
+  }, [journalLines]);
+
+  async function changeJournalFilter(filter: JournalFilter) {
+    setJournalFilter(filter);
+    const error = await loadJournals(filter);
+    if (error) setMessage(error);
   }
 
-  function closeBusinessDate() {
-    const pending = pendingJournals.some((journal) => journal.status === "PENDING");
-    if (pending) {
-      setMessage("Post all pending journals before closing the business date.");
+  async function applyRange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (range.from && range.to && range.from > range.to) {
+      setMessage("The start date must be on or before the end date.");
       return;
     }
-    if (!balanced) {
-      setMessage("The trial balance must be balanced before close.");
+    const error = await loadTrialBalance(range.from, range.to);
+    setMessage(error ?? "Trial balance updated for the selected dates.");
+  }
+
+  async function createAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accountForm.accountCode.trim() || !accountForm.accountName.trim()) {
+      setMessage("Enter an account code and account name.");
       return;
     }
 
-    setClosed(true);
-    setEvents((current) => [
-      {
-        id: createLocalId("event"),
-        reference: businessDate,
-        action: "Business date closed",
-        detail: "Revenue, expenses, cash, AR, AP, and inventory control totals were locked for reporting."
-      },
-      ...current
-    ]);
-    setMessage(`${formatDate(businessDate)} closed. Reports are ready for management review.`);
+    setBusy(true);
+    const result = await apiRequest<Account>("/accounting/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        accountCode: accountForm.accountCode.trim(),
+        accountName: accountForm.accountName.trim(),
+        accountType: accountForm.accountType,
+        isControlAccount: accountForm.isControlAccount
+      })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setAccounts((current) =>
+      [...current, result.data].sort((a, b) => a.accountCode.localeCompare(b.accountCode))
+    );
+    setAccountForm({ accountCode: "", accountName: "", accountType: accountForm.accountType, isControlAccount: false });
+    setMessage(`Account ${result.data.accountCode} ${result.data.accountName} added.`);
   }
+
+  function updateLine(key: string, patch: Partial<JournalFormLine>) {
+    setJournalLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  }
+
+  async function createJournal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const lines = journalLines.filter((line) => line.accountCode || line.debitAmount.trim() || line.creditAmount.trim());
+
+    if (lines.length < 2) {
+      setMessage("A journal needs at least two lines.");
+      return;
+    }
+    for (const [index, line] of lines.entries()) {
+      const debit = line.debitAmount.trim();
+      const credit = line.creditAmount.trim();
+      if (!line.accountCode) {
+        setMessage(`Choose an account on line ${index + 1}.`);
+        return;
+      }
+      if ((debit && !amountPattern.test(debit)) || (credit && !amountPattern.test(credit))) {
+        setMessage(`Line ${index + 1} has an invalid amount. Use numbers like 125.50.`);
+        return;
+      }
+      if ((Number(debit || 0) > 0) === (Number(credit || 0) > 0)) {
+        setMessage(`Line ${index + 1} must have either a debit or a credit amount.`);
+        return;
+      }
+    }
+    if (!formTotals.balanced) {
+      setMessage(`Debits (${formatMoney(formTotals.debit)}) must equal credits (${formatMoney(formTotals.credit)}).`);
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<Journal>("/accounting/journals", {
+      method: "POST",
+      body: JSON.stringify({
+        memo: journalForm.memo.trim() || undefined,
+        reference: journalForm.reference.trim() || undefined,
+        idempotencyKey: `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        lines: lines.map((line) => ({
+          accountCode: line.accountCode,
+          debitAmount: line.debitAmount.trim() || undefined,
+          creditAmount: line.creditAmount.trim() || undefined
+        }))
+      })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setJournalForm({ memo: "", reference: "" });
+    setJournalLines([newFormLine(), newFormLine()]);
+    setJournalFilter("DRAFT");
+    await Promise.all([loadJournals("DRAFT"), loadBusinessDate()]);
+    setMessage(`Draft journal ${result.data.entryNumber} saved. Post it to update the ledger.`);
+  }
+
+  async function postJournal(journal: Journal) {
+    setBusy(true);
+    const result = await apiRequest<Journal>(`/accounting/journals/${journal.id}/post`, { method: "POST" });
+    if (!result.ok) {
+      setBusy(false);
+      setMessage(result.error);
+      return;
+    }
+    await Promise.all([loadJournals(journalFilter), loadTrialBalance(range.from, range.to), loadBusinessDate()]);
+    setBusy(false);
+    setMessage(`Journal ${result.data.entryNumber} posted to the general ledger.`);
+  }
+
+  async function closeBusinessDate() {
+    if (!businessDate) return;
+    const closingDate = businessDate.current.businessDate;
+    if (!window.confirm(`Close business date ${formatDate(closingDate)} and open the next day?`)) return;
+
+    setBusy(true);
+    const result = await apiRequest<{ closed: BusinessDateRecord; current: BusinessDateRecord }>(
+      "/accounting/business-date/close",
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!result.ok) {
+      setBusy(false);
+      setMessage(result.error);
+      return;
+    }
+    await loadBusinessDate();
+    setBusy(false);
+    setMessage(`${formatDate(result.data.closed.businessDate)} closed. Business date is now ${formatDate(result.data.current.businessDate)}.`);
+  }
+
+  const tbRows = trialBalance?.rows ?? [];
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
@@ -265,43 +372,67 @@ export function FinanceWorkspace() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="font-bold">Finance Close Workspace</h3>
-            <p className="text-sm text-muted-foreground">Post operational journals, review reports, and close the business date.</p>
+            <p className="text-sm text-muted-foreground">Post journals, review the ledger, and close the business date.</p>
           </div>
-          <Button type="button" variant="secondary" onClick={loadData}>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loading || busy}
+            onClick={() => void loadAll(journalFilter, range.from, range.to)}
+          >
             <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-            Load finance
+            {loading ? "Loading..." : "Refresh"}
           </Button>
         </div>
 
-        <p className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground">{message}</p>
+        <p className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground" role="status">
+          {message}
+        </p>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Revenue</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(profitAndLoss.revenue)}</p>
-          </div>
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Expenses</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(profitAndLoss.expense)}</p>
-          </div>
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Net profit</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(netProfit)}</p>
-          </div>
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Pending journals</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(pendingTotal)}</p>
-          </div>
+          <Stat label="Revenue" value={formatMoney(summary.revenue)} />
+          <Stat label="Costs and expenses" value={formatMoney(summary.costOfSales + summary.expenses)} />
+          <Stat label="Net profit" value={formatMoney(summary.netProfit)} />
+          <Stat label="Draft journals" value={String(draftCount)} />
         </div>
 
         <div className="overflow-hidden rounded border border-border bg-white">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-primary" aria-hidden="true" />
               <h4 className="font-bold">Trial Balance</h4>
             </div>
-            <Badge tone={balanced ? "success" : "danger"}>{balanced ? "Balanced" : "Out of balance"}</Badge>
+            {trialBalance && tbRows.length > 0 ? (
+              <Badge tone={trialBalance.balanced ? "success" : "danger"}>
+                {trialBalance.balanced ? "Balanced" : "Out of balance"}
+              </Badge>
+            ) : null}
           </div>
+          <form onSubmit={applyRange} className="flex flex-wrap items-end gap-2 border-b border-border px-4 py-3">
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              Posted from
+              <Input type="date" value={range.from} onChange={(event) => setRange({ ...range, from: event.target.value })} />
+            </label>
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              Posted to
+              <Input type="date" value={range.to} onChange={(event) => setRange({ ...range, to: event.target.value })} />
+            </label>
+            <Button type="submit" variant="secondary" disabled={busy}>
+              Apply
+            </Button>
+            {range.from || range.to ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setRange({ from: "", to: "" });
+                  void loadTrialBalance("", "");
+                }}
+              >
+                All dates
+              </Button>
+            ) : null}
+          </form>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[680px] border-collapse text-sm">
               <thead className="bg-muted/70 text-left text-xs uppercase text-muted-foreground">
@@ -313,33 +444,121 @@ export function FinanceWorkspace() {
                 </tr>
               </thead>
               <tbody>
-                {enrichedTrialBalance.length === 0 ? (
+                {tbRows.length === 0 ? (
                   <tr>
                     <td className="px-4 py-8 text-muted-foreground" colSpan={4}>
-                      No finance data loaded yet.
+                      {loading ? "Loading trial balance..." : "No posted journals yet. Posted activity will appear here."}
                     </td>
                   </tr>
                 ) : (
-                  enrichedTrialBalance.map((line) => (
-                    <tr key={line.accountCode} className="border-t border-border">
-                      <td className="px-4 py-3">
-                        <p className="font-semibold">{line.accountCode} {line.account?.name}</p>
+                  tbRows.map((row) => (
+                    <tr key={row.accountId} className="border-t border-border">
+                      <td className="px-4 py-3 font-semibold">
+                        {row.accountCode} {row.accountName}
                       </td>
-                      <td className="px-4 py-3">{line.account?.type}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{line.debit ? formatMoney(line.debit) : "-"}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{line.credit ? formatMoney(line.credit) : "-"}</td>
+                      <td className="px-4 py-3">{row.accountType ? accountTypeLabel(row.accountType) : "-"}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {Number(row.debitBalance) ? formatMoney(Number(row.debitBalance)) : "-"}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {Number(row.creditBalance) ? formatMoney(Number(row.creditBalance)) : "-"}
+                      </td>
                     </tr>
                   ))
                 )}
               </tbody>
               <tfoot className="border-t border-border bg-background/70 font-bold">
                 <tr>
-                  <td className="px-4 py-3" colSpan={2}>Totals</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{formatMoney(totals.debit)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{formatMoney(totals.credit)}</td>
+                  <td className="px-4 py-3" colSpan={2}>
+                    Totals
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatMoney(Number(trialBalance?.totals.debitBalance ?? 0))}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatMoney(Number(trialBalance?.totals.creditBalance ?? 0))}
+                  </td>
                 </tr>
               </tfoot>
             </table>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded border border-border bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" aria-hidden="true" />
+              <h4 className="font-bold">Journals</h4>
+            </div>
+            <div className="flex gap-1" role="tablist" aria-label="Journal status">
+              {(["DRAFT", "POSTED", "ALL"] as JournalFilter[]).map((filter) => (
+                <Button
+                  key={filter}
+                  type="button"
+                  role="tab"
+                  aria-selected={journalFilter === filter}
+                  variant={journalFilter === filter ? "primary" : "ghost"}
+                  className="h-8 px-3"
+                  onClick={() => void changeJournalFilter(filter)}
+                >
+                  {filter === "ALL" ? "All" : filter === "DRAFT" ? "Drafts" : "Posted"}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="divide-y divide-border">
+            {journals.length === 0 ? (
+              <div className="px-4 py-8 text-sm text-muted-foreground">
+                {loading
+                  ? "Loading journals..."
+                  : journalFilter === "DRAFT"
+                    ? "No draft journals are waiting to be posted."
+                    : "No journals found."}
+              </div>
+            ) : (
+              journals.map((journal) => (
+                <div key={journal.id} className="px-4 py-3 text-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-bold">
+                        {journal.entryNumber}
+                        {journal.sourceNumber ? <span className="font-normal text-muted-foreground"> / {journal.sourceNumber}</span> : null}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {journal.description ?? sourceLabel(journal.sourceType)} - {formatDateTime(journal.postedAt ?? journal.createdAt)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold tabular-nums">{formatMoney(Number(journal.totalDebit))}</span>
+                      <Badge tone={journalTone(journal.status)}>{journal.status}</Badge>
+                      {journal.status === "DRAFT" && can("accounting.journals.post") ? (
+                        <Button type="button" className="h-8 px-3" disabled={busy} onClick={() => void postJournal(journal)}>
+                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                          Post
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <table className="mt-2 w-full text-xs">
+                    <tbody>
+                      {journal.lines.map((line) => (
+                        <tr key={line.id} className="text-muted-foreground">
+                          <td className="py-0.5 pr-2">
+                            {line.accountCode} {line.accountName}
+                          </td>
+                          <td className="w-24 py-0.5 text-right tabular-nums">
+                            {Number(line.debitAmount) ? formatMoney(Number(line.debitAmount)) : ""}
+                          </td>
+                          <td className="w-24 py-0.5 text-right tabular-nums">
+                            {Number(line.creditAmount) ? formatMoney(Number(line.creditAmount)) : ""}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -352,77 +571,147 @@ export function FinanceWorkspace() {
             <CalendarCheck className="h-4 w-4 text-primary" aria-hidden="true" />
             <h4 className="font-bold">Business Date Close</h4>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-            <Input
-              aria-label="Business date"
-              type="date"
-              value={businessDate}
-              onChange={(event) => setBusinessDate(event.target.value)}
-            />
-            <Badge tone={closed ? "success" : "warning"}>{closed ? "Closed" : "Open"}</Badge>
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <Button type="button" variant="secondary" onClick={postPendingJournals}>
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              Post journals
-            </Button>
-            <Button type="button" onClick={closeBusinessDate}>
-              <LockKeyhole className="h-4 w-4" aria-hidden="true" />
-              Close date
-            </Button>
-          </div>
+          {businessDate ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xl font-bold">{formatDate(businessDate.current.businessDate)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Opened {formatDateTime(businessDate.current.openedAt)}
+                    {businessDate.current.openedBy ? ` by ${businessDate.current.openedBy}` : ""}
+                  </p>
+                </div>
+                <Badge tone={businessDate.current.status === "CLOSED" ? "success" : "warning"}>{businessDate.current.status}</Badge>
+              </div>
+              {businessDate.draftJournalCount > 0 ? (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  {businessDate.draftJournalCount} draft journal{businessDate.draftJournalCount === 1 ? "" : "s"} must be posted before closing.
+                </p>
+              ) : null}
+              {can("accounting.journals.post") ? (
+                <Button
+                  type="button"
+                  className="mt-3 w-full"
+                  disabled={busy || businessDate.draftJournalCount > 0}
+                  onClick={() => void closeBusinessDate()}
+                >
+                  <LockKeyhole className="h-4 w-4" aria-hidden="true" />
+                  Close {formatDate(businessDate.current.businessDate)}
+                </Button>
+              ) : null}
+              {businessDate.history.some((entry) => entry.status === "CLOSED") ? (
+                <div className="mt-4 border-t border-border pt-3">
+                  <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Recently closed</p>
+                  <ul className="space-y-1 text-sm">
+                    {businessDate.history
+                      .filter((entry) => entry.status === "CLOSED")
+                      .slice(0, 5)
+                      .map((entry) => (
+                        <li key={entry.id} className="flex justify-between gap-3">
+                          <span>{formatDate(entry.businessDate)}</span>
+                          <span className="text-muted-foreground">
+                            {entry.closedBy ?? "Closed"}
+                            {entry.closedAt ? `, ${formatDateTime(entry.closedAt)}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">{loading ? "Loading business date..." : businessDateError || "No business date available."}</p>
+          )}
         </div>
 
-        <form onSubmit={createAdjustment} className="rounded border border-border bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <FileText className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Manual Journal Adjustment</h4>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Input
-              aria-label="Adjustment description"
-              className="sm:col-span-2"
-              value={adjustmentForm.description}
-              onChange={(event) => setAdjustmentForm({ ...adjustmentForm, description: event.target.value })}
-              placeholder="Description"
-            />
-            <select
-              aria-label="Debit account"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={adjustmentForm.debitAccount}
-              onChange={(event) => setAdjustmentForm({ ...adjustmentForm, debitAccount: event.target.value })}
-            >
-              {activeAccounts.map((account) => (
-                <option key={account.code} value={account.code}>
-                  Dr {account.code} {account.name}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Credit account"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={adjustmentForm.creditAccount}
-              onChange={(event) => setAdjustmentForm({ ...adjustmentForm, creditAccount: event.target.value })}
-            >
-              {activeAccounts.map((account) => (
-                <option key={account.code} value={account.code}>
-                  Cr {account.code} {account.name}
-                </option>
-              ))}
-            </select>
-            <Input
-              aria-label="Adjustment amount"
-              className="sm:col-span-2"
-              value={adjustmentForm.amount}
-              onChange={(event) => setAdjustmentForm({ ...adjustmentForm, amount: event.target.value })}
-              placeholder="Amount"
-            />
-          </div>
-          <Button className="mt-3">
-            <Banknote className="h-4 w-4" aria-hidden="true" />
-            Add adjustment
-          </Button>
-        </form>
+        {can("accounting.journals.create") ? (
+          <form onSubmit={createJournal} className="rounded border border-border bg-white p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Banknote className="h-4 w-4 text-primary" aria-hidden="true" />
+              <h4 className="font-bold">Manual Journal</h4>
+            </div>
+            {accounts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Add accounts to the chart of accounts before creating journals.</p>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Input
+                    aria-label="Journal memo"
+                    value={journalForm.memo}
+                    maxLength={240}
+                    onChange={(event) => setJournalForm({ ...journalForm, memo: event.target.value })}
+                    placeholder="Memo, e.g. Bank charges"
+                  />
+                  <Input
+                    aria-label="Journal reference"
+                    value={journalForm.reference}
+                    maxLength={80}
+                    onChange={(event) => setJournalForm({ ...journalForm, reference: event.target.value })}
+                    placeholder="Reference (optional)"
+                  />
+                </div>
+                <div className="mt-3 space-y-2">
+                  {journalLines.map((line, index) => (
+                    <div key={line.key} className="grid gap-2 sm:grid-cols-[1fr_6.5rem_6.5rem_auto]">
+                      <select
+                        aria-label={`Line ${index + 1} account`}
+                        className="h-10 rounded border border-border bg-white px-3 text-sm"
+                        value={line.accountCode}
+                        onChange={(event) => updateLine(line.key, { accountCode: event.target.value })}
+                      >
+                        <option value="">Choose account</option>
+                        {accounts
+                          .filter((account) => account.active)
+                          .map((account) => (
+                            <option key={account.id} value={account.accountCode}>
+                              {account.accountCode} {account.accountName}
+                            </option>
+                          ))}
+                      </select>
+                      <Input
+                        aria-label={`Line ${index + 1} debit`}
+                        inputMode="decimal"
+                        value={line.debitAmount}
+                        onChange={(event) => updateLine(line.key, { debitAmount: event.target.value, creditAmount: event.target.value ? "" : line.creditAmount })}
+                        placeholder="Debit"
+                      />
+                      <Input
+                        aria-label={`Line ${index + 1} credit`}
+                        inputMode="decimal"
+                        value={line.creditAmount}
+                        onChange={(event) => updateLine(line.key, { creditAmount: event.target.value, debitAmount: event.target.value ? "" : line.debitAmount })}
+                        placeholder="Credit"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="px-3"
+                        aria-label={`Remove line ${index + 1}`}
+                        disabled={journalLines.length <= 2}
+                        onClick={() => setJournalLines((current) => current.filter((entry) => entry.key !== line.key))}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <Button type="button" variant="secondary" onClick={() => setJournalLines((current) => [...current, newFormLine()])}>
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    Add line
+                  </Button>
+                  <span className={formTotals.balanced ? "font-semibold text-success" : "text-muted-foreground"}>
+                    Dr {formatMoney(formTotals.debit)} / Cr {formatMoney(formTotals.credit)}
+                  </span>
+                </div>
+                <Button className="mt-3" disabled={busy}>
+                  <FileText className="h-4 w-4" aria-hidden="true" />
+                  Save as draft
+                </Button>
+              </>
+            )}
+          </form>
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded border border-border bg-white p-4">
@@ -431,10 +720,10 @@ export function FinanceWorkspace() {
               <h4 className="font-bold">Balance Sheet</h4>
             </div>
             <div className="space-y-2 text-sm">
-              <Row label="Assets" value={balanceSheet.assets} />
-              <Row label="Liabilities" value={balanceSheet.liabilities} />
-              <Row label="Equity" value={balanceSheet.equity} />
-              <Row label="Retained profit" value={netProfit} strong />
+              <Row label="Assets" value={summary.assets} />
+              <Row label="Liabilities" value={summary.liabilities} />
+              <Row label="Equity" value={summary.equity} />
+              <Row label="Current profit" value={summary.netProfit} strong />
             </div>
           </div>
           <div className="rounded border border-border bg-white p-4">
@@ -443,27 +732,87 @@ export function FinanceWorkspace() {
               <h4 className="font-bold">Profit and Loss</h4>
             </div>
             <div className="space-y-2 text-sm">
-              <Row label="Room revenue" value={accountNet(enrichedTrialBalance, "4100", "credit")} />
-              <Row label="Restaurant revenue" value={accountNet(enrichedTrialBalance, "4200", "credit")} />
-              <Row label="Cost of sales" value={accountNet(enrichedTrialBalance, "5100", "debit")} />
-              <Row label="Operating expenses" value={accountNet(enrichedTrialBalance, "6100", "debit")} />
+              {summary.revenueRows.length === 0 && summary.expenseRows.length === 0 ? (
+                <p className="text-muted-foreground">No posted revenue or expenses yet.</p>
+              ) : (
+                <>
+                  {summary.revenueRows.map((row) => (
+                    <Row key={row.accountId} label={row.accountName} value={Number(row.totalCredit) - Number(row.totalDebit)} />
+                  ))}
+                  {summary.expenseRows.map((row) => (
+                    <Row key={row.accountId} label={row.accountName} value={-(Number(row.totalDebit) - Number(row.totalCredit))} />
+                  ))}
+                  <Row label="Net profit" value={summary.netProfit} strong />
+                </>
+              )}
             </div>
           </div>
         </div>
 
         <div className="rounded border border-border bg-white">
-          <div className="border-b border-border px-4 py-3">
-            <h4 className="font-bold">Close Audit</h4>
+          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+            <BookPlus className="h-4 w-4 text-primary" aria-hidden="true" />
+            <h4 className="font-bold">Chart of Accounts</h4>
+            <span className="ml-auto text-xs text-muted-foreground">{accounts.length} accounts</span>
           </div>
-          <div className="divide-y divide-border">
-            {events.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-muted-foreground">No finance events posted yet.</div>
+          {can("accounting.accounts.manage") ? (
+            <form onSubmit={createAccount} className="grid gap-2 border-b border-border p-4 sm:grid-cols-[6rem_1fr]">
+              <Input
+                aria-label="Account code"
+                value={accountForm.accountCode}
+                maxLength={20}
+                onChange={(event) => setAccountForm({ ...accountForm, accountCode: event.target.value })}
+                placeholder="Code"
+              />
+              <Input
+                aria-label="Account name"
+                value={accountForm.accountName}
+                maxLength={160}
+                onChange={(event) => setAccountForm({ ...accountForm, accountName: event.target.value })}
+                placeholder="Account name"
+              />
+              <select
+                aria-label="Account type"
+                className="h-10 rounded border border-border bg-white px-3 text-sm sm:col-span-2"
+                value={accountForm.accountType}
+                onChange={(event) => setAccountForm({ ...accountForm, accountType: event.target.value as AccountType })}
+              >
+                {accountTypes.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+              <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={accountForm.isControlAccount}
+                  onChange={(event) => setAccountForm({ ...accountForm, isControlAccount: event.target.checked })}
+                />
+                Control account
+              </label>
+              <Button className="sm:col-span-2" disabled={busy}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add account
+              </Button>
+            </form>
+          ) : null}
+          <div className="max-h-80 divide-y divide-border overflow-y-auto">
+            {accounts.length === 0 ? (
+              <div className="px-4 py-8 text-sm text-muted-foreground">
+                {loading ? "Loading accounts..." : "No accounts have been set up for this property."}
+              </div>
             ) : (
-              events.slice(0, 6).map((event) => (
-                <div key={event.id} className="px-4 py-3 text-sm">
-                  <p className="font-bold">{event.reference}</p>
-                  <p className="text-muted-foreground">{event.action}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{event.detail}</p>
+              accounts.map((account) => (
+                <div key={account.id} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
+                  <span className="min-w-0 truncate">
+                    <span className="font-semibold">{account.accountCode}</span> {account.accountName}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {accountTypeLabel(account.accountType)}
+                    {account.isControlAccount ? " / control" : ""}
+                    {account.active ? "" : " / inactive"}
+                  </span>
                 </div>
               ))
             )}
@@ -474,51 +823,53 @@ export function FinanceWorkspace() {
   );
 }
 
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border bg-white p-4">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xl font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
 function Row({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
   return (
     <div className={strong ? "flex justify-between gap-3 border-t border-border pt-2 font-bold" : "flex justify-between gap-3"}>
-      <span className="text-muted-foreground">{label}</span>
+      <span className="truncate text-muted-foreground">{label}</span>
       <span className="tabular-nums">{formatMoney(value)}</span>
     </div>
   );
 }
 
-function addAmount(lines: TrialLine[], accountCode: string, side: "debit" | "credit", amount: number) {
-  const line = lines.find((entry) => entry.accountCode === accountCode);
-  if (!line) {
-    lines.push({
-      accountCode,
-      debit: side === "debit" ? amount : 0,
-      credit: side === "credit" ? amount : 0
-    });
-    return;
-  }
-
-  if (side === "debit") {
-    line.debit += amount;
-  } else {
-    line.credit += amount;
-  }
+function newFormLine(): JournalFormLine {
+  return { key: `line-${Date.now()}-${Math.random().toString(16).slice(2)}`, accountCode: "", debitAmount: "", creditAmount: "" };
 }
 
-function accountNet(lines: Array<TrialLine & { account?: Account }>, accountCode: string, naturalSide: "debit" | "credit") {
-  const line = lines.find((entry) => entry.accountCode === accountCode);
-  if (!line) return 0;
-  return naturalSide === "debit" ? line.debit - line.credit : line.credit - line.debit;
+function accountTypeLabel(type: AccountType) {
+  return accountTypes.find((entry) => entry.value === type)?.label ?? type;
+}
+
+function sourceLabel(sourceType: string) {
+  return sourceType === "MANUAL" ? "Manual journal" : sourceType;
+}
+
+function journalTone(status: JournalStatus) {
+  if (status === "POSTED") return "success" as const;
+  if (status === "DRAFT") return "warning" as const;
+  if (status === "VOID") return "danger" as const;
+  return "neutral" as const;
 }
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat("en", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2
-  }).format(value);
+  return new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(
+    new Date(`${value.slice(0, 10)}T00:00:00.000Z`)
+  );
 }
 
-function createLocalId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }

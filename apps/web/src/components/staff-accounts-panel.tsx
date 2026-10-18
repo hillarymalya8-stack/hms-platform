@@ -52,10 +52,6 @@ export function StaffAccountsPanel() {
   useEffect(() => {
     const session = readSession();
     setCurrentUser(session?.user ?? null);
-    if (session?.accessToken.startsWith("demo.")) {
-      setMessage("Staff logins are saved in the live system. Sign in with a live administrator account to create them.");
-      return;
-    }
     void loadAccounts();
   }, []);
 
