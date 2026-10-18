@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { clearSession, hasAnyPermission, readSession, resolveHomePath, type AuthenticatedUser } from "@/lib/auth";
+import { clearSession, hasAnyPermission, readSession, refreshSession, resolveHomePath, type AuthenticatedUser } from "@/lib/auth";
 
 type RouteGuardProps = {
   children: ReactNode;
@@ -27,6 +27,20 @@ export function RouteGuard({ children, requiredPermissions = [] }: RouteGuardPro
 
     setUser(session.user);
     setReady(true);
+
+    let cancelled = false;
+    void refreshSession(session).then((refreshed) => {
+      if (cancelled) return;
+      if (!refreshed) {
+        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+        return;
+      }
+      setUser(refreshed.user);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [pathname, router]);
 
   if (!ready || !user) {

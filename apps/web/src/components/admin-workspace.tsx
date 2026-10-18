@@ -11,13 +11,13 @@ import {
   ReceiptText,
   Settings,
   ShieldCheck,
-  UserPlus,
   UsersRound
 } from "lucide-react";
 import { roleAccessLevels } from "@hms/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InvoiceWorkspace } from "@/components/invoice-workspace";
+import { StaffAccountsPanel } from "@/components/staff-accounts-panel";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
 
@@ -164,12 +164,6 @@ export function AdminWorkspace() {
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [message, setMessage] = useState("Load administration data to manage access and settings.");
   const [busy, setBusy] = useState(false);
-  const [registerForm, setRegisterForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    roleId: "role-front-office"
-  });
   const [roomTypeForm, setRoomTypeForm] = useState({
     code: "",
     name: "",
@@ -236,7 +230,6 @@ export function AdminWorkspace() {
     const mappedRoles = roleResult.data.map(mapApiRole);
     setRoles(mappedRoles);
     setSelectedRoleId(mappedRoles[0]?.id ?? "role-super-admin");
-    setRegisterForm((current) => ({ ...current, roleId: mappedRoles[0]?.id ?? current.roleId }));
     setUsers(userResult.data.map((user) => mapApiUser(user, mappedRoles)));
     if (roomTypeResult.ok) {
       setRoomTypes(roomTypeResult.data);
@@ -248,63 +241,6 @@ export function AdminWorkspace() {
       createAudit("Settings viewed", "System Administrator", "Main Hotel", "Property settings loaded.")
     ]);
     setMessage("Registered users and access levels loaded.");
-  }
-
-  async function registerUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const role = activeRoles.find((entry) => entry.id === registerForm.roleId);
-
-    if (!registerForm.name.trim() || !registerForm.email.trim() || !registerForm.password || !role) {
-      setMessage("Enter a name, email, temporary password, and access level before registering a user.");
-      return;
-    }
-
-    if (registerForm.password.length < 8) {
-      setMessage("Temporary password must be at least 8 characters.");
-      return;
-    }
-
-    if (activeUsers.some((user) => user.email.toLowerCase() === registerForm.email.trim().toLowerCase())) {
-      setMessage("That email address is already assigned to a user.");
-      return;
-    }
-
-    if (role.id.startsWith("role-")) {
-      setMessage("Start the database and load live roles before saving a new registered user.");
-      return;
-    }
-
-    setBusy(true);
-    const result = await apiRequest<ApiUser>("/users", {
-      method: "POST",
-      body: JSON.stringify({
-        fullName: registerForm.name.trim(),
-        email: registerForm.email.trim(),
-        password: registerForm.password,
-        roleId: role.id
-      })
-    });
-    setBusy(false);
-
-    if (!result.ok) {
-      setMessage(result.error);
-      return;
-    }
-
-    const user: AdminUser = {
-      id: result.data.id,
-      name: result.data.fullName,
-      email: result.data.email,
-      roleId: role.id,
-      status: result.data.status,
-      mfa: result.data.mfaEnabled,
-      lastLogin: "Never",
-      accessSummary: role.permissions.join(", ")
-    };
-    setUsers((current) => [user, ...current]);
-    setRegisterForm({ name: "", email: "", password: "", roleId: role.id });
-    addAudit("User registered", "System Administrator", user.email, `Assigned access level: ${role.name}`);
-    setMessage(`${user.name} registered as ${role.name}. They will open ${role.home}.`);
   }
 
   async function createRoomType(event: FormEvent<HTMLFormElement>) {
@@ -431,27 +367,6 @@ export function AdminWorkspace() {
     setMessage(`${preset.name} preset loaded. Adjust the rate if needed, then save the room type.`);
   }
 
-  function toggleUserStatus(userId: string) {
-    const user = activeUsers.find((entry) => entry.id === userId);
-    if (!user) return;
-    const nextStatus: UserStatus = user.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE";
-
-    setUsers((current) =>
-      current.map((entry) => (entry.id === userId ? { ...entry, status: nextStatus } : entry))
-    );
-    addAudit("User status changed", "System Administrator", user.email, `New status: ${nextStatus}`);
-    setMessage(`${user.name} is now ${nextStatus.toLowerCase()}.`);
-  }
-
-  function enforceMfa(userId: string) {
-    const user = activeUsers.find((entry) => entry.id === userId);
-    if (!user) return;
-
-    setUsers((current) => current.map((entry) => (entry.id === userId ? { ...entry, mfa: true } : entry)));
-    addAudit("MFA enforced", "System Administrator", user.email, "MFA required at next login.");
-    setMessage(`MFA enabled for ${user.name}.`);
-  }
-
   function togglePermission(module: string) {
     if (!selectedRole) return;
     if (selectedRole.level === 100 && module === "administration") {
@@ -514,53 +429,7 @@ export function AdminWorkspace() {
           <AdminMetric icon={ReceiptText} label="Audit events" value={String(audit.length)} detail="Session history" />
         </div>
 
-        <form onSubmit={registerUser} className="rounded border border-border bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <UserPlus className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Register User</h4>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Input
-              aria-label="User name"
-              value={registerForm.name}
-              onChange={(event) => setRegisterForm({ ...registerForm, name: event.target.value })}
-              placeholder="Full name"
-            />
-            <Input
-              aria-label="User email"
-              type="email"
-              value={registerForm.email}
-              onChange={(event) => setRegisterForm({ ...registerForm, email: event.target.value })}
-              placeholder="Email"
-            />
-            <Input
-              aria-label="Temporary password"
-              type="password"
-              value={registerForm.password}
-              onChange={(event) => setRegisterForm({ ...registerForm, password: event.target.value })}
-              placeholder="Temporary password"
-            />
-            <select
-              aria-label="User access level"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={registerForm.roleId}
-              onChange={(event) => setRegisterForm({ ...registerForm, roleId: event.target.value })}
-            >
-              {activeRoles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            The selected access level controls which system opens after login and which modules are blocked.
-          </p>
-          <Button className="mt-3" disabled={busy}>
-            <UserPlus className="h-4 w-4" aria-hidden="true" />
-            Register user
-          </Button>
-        </form>
+        <StaffAccountsPanel />
 
         <div className="rounded border border-border bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -678,65 +547,6 @@ export function AdminWorkspace() {
           </div>
         </div>
 
-        <div className="overflow-hidden rounded border border-border bg-white">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-            <UsersRound className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">User Access</h4>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] border-collapse text-sm">
-              <thead className="bg-muted/70 text-left text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">User</th>
-                  <th className="px-4 py-3 font-semibold">Role</th>
-                  <th className="px-4 py-3 font-semibold">Can open</th>
-                  <th className="px-4 py-3 font-semibold">Level</th>
-                  <th className="px-4 py-3 font-semibold">MFA</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeUsers.map((user) => {
-                  const role = activeRoles.find((entry) => entry.id === user.roleId);
-                  return (
-                    <tr key={user.id} className="border-t border-border">
-                      <td className="px-4 py-3">
-                        <p className="font-semibold">{user.name}</p>
-                        <p className="text-xs text-muted-foreground">{user.email}</p>
-                      </td>
-                      <td className="px-4 py-3">{role?.name ?? "Unassigned"}</td>
-                      <td className="px-4 py-3">
-                        <p className="max-w-[220px] text-xs text-muted-foreground">{user.accessSummary || role?.permissions.join(", ") || "No access"}</p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge tone={role && role.level >= 70 ? "primary" : role && role.level >= 40 ? "success" : "neutral"}>
-                          {role ? `Level ${role.level}` : "None"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge tone={user.mfa ? "success" : "warning"}>{user.mfa ? "Enabled" : "Required"}</Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge tone={user.status === "ACTIVE" ? "success" : "danger"}>{user.status}</Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => toggleUserStatus(user.id)}>
-                            {user.status === "ACTIVE" ? "Suspend" : "Activate"}
-                          </Button>
-                          <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => enforceMfa(user.id)} disabled={user.mfa}>
-                            MFA
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
       </div>
 
       <div className="space-y-4">

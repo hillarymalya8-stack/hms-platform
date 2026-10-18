@@ -36,6 +36,16 @@ export function LoginScreen() {
     demoMode ? `Demo mode is ready. Use admin@hotel.local / ${demoAuthPassword}.` : "Use your assigned system credential."
   );
 
+  function openAssignedSystem(result: LoginResponse) {
+    saveSession(result);
+    setState("success");
+    setMessage(`Signed in as ${result.user.fullName}. Opening assigned system...`);
+
+    const nextPath = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("next") : null;
+    const target = nextPath && nextPath !== "/" && nextPath !== "/login" ? nextPath : resolveHomePath(result.user);
+    router.replace(target);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setState("loading");
@@ -50,13 +60,7 @@ export function LoginScreen() {
         return;
       }
 
-      saveSession(result);
-      setState("success");
-      setMessage(`Signed in as ${result.user.fullName}. Opening assigned system...`);
-
-      const nextPath = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("next") : null;
-      const target = nextPath && nextPath !== "/" && nextPath !== "/login" ? nextPath : resolveHomePath(result.user);
-      router.replace(target);
+      openAssignedSystem(result);
       return;
     }
 
@@ -71,18 +75,11 @@ export function LoginScreen() {
 
       if (!response.ok) {
         setState("error");
-        setMessage("Credential rejected. Check the email, password, and assigned role.");
+        setMessage("Credential rejected. Check the username, password, and assigned access.");
         return;
       }
 
-      const result = (await response.json()) as LoginResponse;
-      saveSession(result);
-      setState("success");
-      setMessage(`Signed in as ${result.user.fullName}. Opening assigned system...`);
-
-      const nextPath = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("next") : null;
-      const target = nextPath && nextPath !== "/" && nextPath !== "/login" ? nextPath : resolveHomePath(result.user);
-      router.replace(target);
+      openAssignedSystem((await response.json()) as LoginResponse);
     } catch {
       setState("error");
       setMessage("The API or database is offline. Start the backend services, then sign in again.");
@@ -133,8 +130,14 @@ export function LoginScreen() {
 
               <div className="space-y-3">
                 <label className="block space-y-1.5">
-                  <span className="text-sm font-medium">Email</span>
-                  <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="username" />
+                  <span className="text-sm font-medium">Username or email</span>
+                  <Input
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    type="text"
+                    autoCapitalize="none"
+                    autoComplete="username"
+                  />
                 </label>
 
                 <label className="block space-y-1.5">

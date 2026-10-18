@@ -19,7 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MobileNavigation } from "@/components/mobile-navigation";
-import { clearSession, hasAnyPermission, readSession, resolveHomePath, type AuthenticatedUser } from "@/lib/auth";
+import { clearSession, hasAnyPermission, readSession, refreshSession, resolveHomePath, type AuthenticatedUser } from "@/lib/auth";
 
 type ModuleShellProps = {
   title: string;
@@ -65,6 +65,20 @@ export function ModuleShell({ title, eyebrow, description, requiredPermissions, 
 
     setUser(session.user);
     setReady(true);
+
+    let cancelled = false;
+    void refreshSession(session).then((refreshed) => {
+      if (cancelled) return;
+      if (!refreshed) {
+        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+        return;
+      }
+      setUser(refreshed.user);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [pathname, router]);
 
   const allowedNav = useMemo(

@@ -1,4 +1,4 @@
-import { roleAccessLevels } from "@hms/shared";
+import { roleAccessLevels, systemAccessGroups } from "@hms/shared";
 
 export type AuthenticatedUser = {
   id: string;
@@ -7,6 +7,8 @@ export type AuthenticatedUser = {
   organizationId: string;
   defaultPropertyId?: string | null;
   permissions: string[];
+  username?: string | null;
+  homePath?: string | null;
 };
 
 export type LoginResponse = {
@@ -64,6 +66,30 @@ export function loginWithDemoCredentials(email: string, password: string): Login
   };
 }
 
+// Re-reads the signed-in user from the API so access changes made by an admin apply on the next page load.
+// Returns null when the session is no longer valid, or the current session when it cannot be checked.
+export async function refreshSession(session: StoredSession): Promise<StoredSession | null> {
+  if (session.accessToken.startsWith("demo.")) return session;
+
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/users/me`, {
+      headers: { Authorization: `Bearer ${session.accessToken}` }
+    });
+    if (response.status === 401) {
+      clearSession();
+      return null;
+    }
+    if (!response.ok) return session;
+
+    const user = (await response.json()) as AuthenticatedUser;
+    const refreshed = { ...session, user: { ...session.user, ...user } };
+    window.localStorage.setItem(sessionKey, JSON.stringify(refreshed));
+    return refreshed;
+  } catch {
+    return session;
+  }
+}
+
 export function saveSession(result: LoginResponse) {
   const session: StoredSession = {
     accessToken: result.accessToken,
@@ -114,6 +140,12 @@ export function hasAnyPermission(user: AuthenticatedUser, permissions: readonly 
 export function resolveHomePath(user: AuthenticatedUser) {
   const permissions = new Set(user.permissions);
   const has = (permission: string) => permissions.has(permission);
+
+  // An administrator-chosen start screen wins over the automatic routing below.
+  const chosenHome = systemAccessGroups.find((group) => group.href === user.homePath);
+  if (chosenHome && has(chosenHome.viewPermission)) {
+    return chosenHome.href;
+  }
   const permissionCount = user.permissions.length;
 
   if (has("pos.orders.create") && has("pos.orders.pay") && permissionCount <= 3) {
@@ -138,6 +170,11 @@ export function resolveHomePath(user: AuthenticatedUser) {
 
   if (has("dashboard.view")) {
     return "/dashboard";
+  }
+
+  const firstAllowed = systemAccessGroups.find((group) => has(group.viewPermission));
+  if (firstAllowed) {
+    return firstAllowed.href;
   }
 
   return "/login";
