@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { canUseOutlet } from "@hms/shared";
 import {
   FolioItemType,
   FolioStatus,
@@ -30,7 +31,7 @@ export class PosService {
   listOutlets(user: UserContext) {
     const propertyId = this.requireProperty(user);
     return this.prisma.posOutlet.findMany({
-      where: { propertyId, active: true },
+      where: { propertyId, active: true, outletType: { in: allowedOutletTypes(user) } },
       include: {
         terminals: true,
         tables: {
@@ -48,7 +49,8 @@ export class PosService {
         outletId,
         available: true,
         outlet: {
-          propertyId
+          propertyId,
+          outletType: { in: allowedOutletTypes(user) }
         }
       },
       include: {
@@ -75,7 +77,7 @@ export class PosService {
   listOrders(user: UserContext) {
     const propertyId = this.requireProperty(user);
     return this.prisma.posOrder.findMany({
-      where: { propertyId },
+      where: { propertyId, outlet: { outletType: { in: allowedOutletTypes(user) } } },
       include: {
         items: {
           include: {
@@ -99,7 +101,7 @@ export class PosService {
     const propertyId = this.requireProperty(user);
     const normalizedFilter = stationFilter?.trim().toLowerCase();
     const orders = await this.prisma.posOrder.findMany({
-      where: { propertyId },
+      where: { propertyId, outlet: { outletType: { in: allowedOutletTypes(user) } } },
       include: {
         items: {
           include: {
@@ -239,6 +241,10 @@ export class PosService {
 
   async listBarLowStock(user: UserContext) {
     const propertyId = this.requireProperty(user);
+
+    if (!canUseOutlet(user.permissions, PosOutletType.BAR)) {
+      return { threshold: BAR_RESTOCK_THRESHOLD, items: [] };
+    }
     const balances = await this.prisma.inventoryBalance.findMany({
       where: {
         quantityOnHand: { lt: BAR_RESTOCK_THRESHOLD },
@@ -276,6 +282,8 @@ export class PosService {
       if (!outlet) {
         throw new NotFoundException("POS outlet was not found.");
       }
+
+      assertOutletAccess(user, outlet);
 
       if (dto.idempotencyKey) {
         const existingOrder = await tx.posOrder.findFirst({
@@ -506,6 +514,7 @@ export class PosService {
           propertyId
         },
         include: {
+          outlet: true,
           payments: true
         }
       });
@@ -513,6 +522,8 @@ export class PosService {
       if (!order) {
         throw new NotFoundException("POS order was not found.");
       }
+
+      assertOutletAccess(user, order.outlet);
 
       if (order.status !== PosOrderStatus.OPEN && order.status !== PosOrderStatus.HELD) {
         throw new ConflictException("Only open POS orders can receive payment.");
@@ -771,6 +782,16 @@ export class PosService {
 
 function money(value: Prisma.Decimal | number | string) {
   return new Prisma.Decimal(value).toFixed(2);
+}
+
+function allowedOutletTypes(user: UserContext) {
+  return Object.values(PosOutletType).filter((outletType) => canUseOutlet(user.permissions, outletType));
+}
+
+function assertOutletAccess(user: UserContext, outlet: { name: string; outletType: PosOutletType }) {
+  if (!canUseOutlet(user.permissions, outlet.outletType)) {
+    throw new ForbiddenException(`You do not have access to the ${outlet.name} outlet.`);
+  }
 }
 
 function prepStationFor(category: string, outletType: string) {

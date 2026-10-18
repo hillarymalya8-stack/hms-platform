@@ -26,7 +26,12 @@ export const permissions = [
   { module: "pos", action: "take_payment", code: "pos.orders.pay" },
   { module: "pos", action: "void_order", code: "pos.orders.void" },
   { module: "pos", action: "manage_shift", code: "pos.shifts.manage" },
+  { module: "pos", action: "use_bar_outlet", code: "pos.outlet.bar" },
+  { module: "pos", action: "use_restaurant_outlet", code: "pos.outlet.restaurant" },
   { module: "inventory", action: "view", code: "inventory.view" },
+  { module: "inventory", action: "main_store", code: "inventory.store.main" },
+  { module: "inventory", action: "bar_store", code: "inventory.store.bar" },
+  { module: "inventory", action: "restaurant_store", code: "inventory.store.restaurant" },
   { module: "purchasing", action: "view", code: "purchasing.view" },
   { module: "reports", action: "view", code: "reports.view" }
 ] as const;
