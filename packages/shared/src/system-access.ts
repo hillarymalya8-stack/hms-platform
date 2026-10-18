@@ -42,10 +42,12 @@ export const systemAccessGroups = [
   {
     key: "pos",
     label: "POS",
-    description: "POS terminal, prep monitor and offline sync.",
+    description: "POS terminal, prep monitor and offline sync. Tick the outlets this person sells from.",
     href: "/pos-terminal",
     viewPermission: "pos.view",
     actions: [
+      { code: "pos.outlet.bar", label: "Bar outlet" },
+      { code: "pos.outlet.restaurant", label: "Restaurant outlet" },
       { code: "pos.orders.create", label: "Create orders" },
       { code: "pos.orders.pay", label: "Take payments" },
       { code: "pos.orders.void", label: "Void orders" },
@@ -57,10 +59,14 @@ export const systemAccessGroups = [
   {
     key: "inventory",
     label: "Inventory",
-    description: "Stores, bar and restaurant stock.",
+    description: "Stores, bar and restaurant stock. Tick only the stores this person works in.",
     href: "/inventory",
     viewPermission: "inventory.view",
-    actions: []
+    actions: [
+      { code: "inventory.store.main", label: "Main Store" },
+      { code: "inventory.store.bar", label: "Bar Store" },
+      { code: "inventory.store.restaurant", label: "Restaurant Store" }
+    ]
   },
   {
     key: "purchasing",

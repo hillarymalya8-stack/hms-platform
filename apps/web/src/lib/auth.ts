@@ -1,4 +1,4 @@
-import { roleAccessLevels, systemAccessGroups } from "@hms/shared";
+import { outletScopePermissionCodes, roleAccessLevels, systemAccessGroups } from "@hms/shared";
 
 export type AuthenticatedUser = {
   id: string;
@@ -146,7 +146,8 @@ export function resolveHomePath(user: AuthenticatedUser) {
   if (chosenHome && has(chosenHome.viewPermission)) {
     return chosenHome.href;
   }
-  const permissionCount = user.permissions.length;
+  // Outlet and store ticks narrow where someone works; they do not widen what they can open.
+  const permissionCount = user.permissions.filter((permission) => !outletScopePermissionCodes.includes(permission as never)).length;
 
   if (has("pos.orders.create") && has("pos.orders.pay") && permissionCount <= 3) {
     return "/pos-terminal";

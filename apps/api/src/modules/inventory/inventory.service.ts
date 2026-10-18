@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { canRecordUsageAt, canUseStore, storeAccess } from "@hms/shared";
 import { InventoryMovementStatus, InventoryMovementType, Prisma } from "@prisma/client";
 import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
@@ -15,12 +16,15 @@ export class InventoryService {
     const propertyId = this.requireProperty(user);
     await this.ensureDefaultLocations(propertyId);
 
-    const [items, locations, balances, movements] = await Promise.all([
+    const allLocations = await this.prisma.inventoryLocation.findMany({
+      where: { propertyId, active: true },
+      orderBy: { name: "asc" }
+    });
+    const locations = allLocations.filter((location) => canUseStore(user.permissions, location.code));
+    const locationIds = locations.map((location) => location.id);
+
+    const [items, balances, movements] = await Promise.all([
       this.prisma.inventoryItem.findMany({
-        where: { propertyId, active: true },
-        orderBy: { name: "asc" }
-      }),
-      this.prisma.inventoryLocation.findMany({
         where: { propertyId, active: true },
         orderBy: { name: "asc" }
       }),
@@ -30,9 +34,7 @@ export class InventoryService {
             propertyId,
             active: true
           },
-          location: {
-            active: true
-          }
+          locationId: { in: locationIds }
         },
         include: {
           item: true,
@@ -43,7 +45,10 @@ export class InventoryService {
         }
       }),
       this.prisma.inventoryMovement.findMany({
-        where: { propertyId },
+        where: {
+          propertyId,
+          OR: [{ fromLocationId: { in: locationIds } }, { toLocationId: { in: locationIds } }]
+        },
         include: {
           item: true,
           fromLocation: true,
@@ -57,6 +62,8 @@ export class InventoryService {
     return {
       items: items.map(mapItem),
       locations: locations.map(mapLocation),
+      // Stock can be sent to any store (e.g. Main Store to Bar), but only taken from your own.
+      transferTargets: allLocations.map(mapLocation),
       stock: balances.map(mapBalance),
       movements: movements.map(mapMovement)
     };
@@ -109,6 +116,7 @@ export class InventoryService {
 
     return this.prisma.$transaction(async (tx) => {
       const { item, location } = await this.getItemAndLocation(tx, propertyId, dto.itemId, dto.locationId);
+      assertStoreAccess(user, location);
       const existingBalance = await tx.inventoryBalance.findUnique({
         where: {
           itemId_locationId: {
@@ -191,6 +199,8 @@ export class InventoryService {
       if (!source) {
         throw new NotFoundException("Source location was not found.");
       }
+
+      assertStoreAccess(user, source);
 
       const item = await tx.inventoryItem.findFirst({
         where: { id: dto.itemId, propertyId, active: true }
@@ -308,8 +318,15 @@ export class InventoryService {
     const propertyId = this.requireProperty(user);
     const businessDate = parseBusinessDate(date);
 
+    const locations = await this.prisma.inventoryLocation.findMany({
+      where: { propertyId, active: true }
+    });
+    const locationIds = locations
+      .filter((location) => canUseStore(user.permissions, location.code) && canRecordUsageAt(location.code))
+      .map((location) => location.id);
+
     const records = await this.prisma.dailyUsageRecord.findMany({
-      where: { propertyId, businessDate },
+      where: { propertyId, businessDate, locationId: { in: locationIds } },
       include: {
         item: true,
         location: true
@@ -333,6 +350,12 @@ export class InventoryService {
     }
 
     const { item, location } = await this.getItemAndLocation(this.prisma, propertyId, dto.itemId, dto.locationId);
+    assertStoreAccess(user, location);
+
+    if (!canRecordUsageAt(location.code)) {
+      throw new BadRequestException(`Goods used are recorded in the Bar or Restaurant outlet, not in ${location.name}.`);
+    }
+
     const balance = await this.prisma.inventoryBalance.findUnique({
       where: {
         itemId_locationId: {
@@ -388,11 +411,8 @@ export class InventoryService {
   }
 
   private async ensureDefaultLocations(propertyId: string) {
-    for (const location of [
-      ["MAIN", "Main Store", "STORE"],
-      ["KITCHEN", "Kitchen Store", "KITCHEN"],
-      ["BAR", "Bar Store", "BAR"]
-    ] as const) {
+    const locationTypes = { MAIN: "STORE", BAR: "BAR", KITCHEN: "KITCHEN" } as const;
+    for (const location of storeAccess.map((store) => [store.locationCode, store.label, locationTypes[store.locationCode]] as const)) {
       await this.prisma.inventoryLocation.upsert({
         where: {
           propertyId_code: {
@@ -424,6 +444,12 @@ export class InventoryService {
   }
 }
 
+function assertStoreAccess(user: UserContext, location: { code: string; name: string }) {
+  if (!canUseStore(user.permissions, location.code)) {
+    throw new ForbiddenException(`You do not have access to ${location.name}.`);
+  }
+}
+
 type InventoryItemRecord = {
   id: string;
   sku: string;
@@ -434,6 +460,7 @@ type InventoryItemRecord = {
 
 type InventoryLocationRecord = {
   id: string;
+  code: string;
   name: string;
   locationType: string;
 };
@@ -462,7 +489,9 @@ function mapLocation(location: InventoryLocationRecord) {
   return {
     id: location.id,
     name: location.name,
-    type: location.locationType
+    type: location.locationType,
+    code: location.code,
+    usageAllowed: canRecordUsageAt(location.code)
   };
 }
 

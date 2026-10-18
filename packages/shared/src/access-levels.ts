@@ -41,7 +41,12 @@ export const roleAccessLevels = [
       "dashboard.view",
       "front_office.view",
       "pos.view",
+      "pos.outlet.bar",
+      "pos.outlet.restaurant",
       "inventory.view",
+      "inventory.store.main",
+      "inventory.store.bar",
+      "inventory.store.restaurant",
       "purchasing.view",
       "accounting.view",
       "reports.view",
@@ -96,7 +101,12 @@ export const roleAccessLevels = [
       "pos.view",
       "pos.orders.void",
       "pos.shifts.manage",
+      "pos.outlet.bar",
+      "pos.outlet.restaurant",
       "inventory.view",
+      "inventory.store.main",
+      "inventory.store.bar",
+      "inventory.store.restaurant",
       "purchasing.view",
       "reports.view"
     ],
@@ -133,7 +143,7 @@ export const roleAccessLevels = [
     description: "Cashier-machine access for POS catalog, ticket creation, and payments only.",
     home: "POS terminal",
     modules: ["pos"],
-    permissionCodes: ["pos.view", "pos.orders.create", "pos.orders.pay"],
+    permissionCodes: ["pos.view", "pos.outlet.bar", "pos.outlet.restaurant", "pos.orders.create", "pos.orders.pay"],
     defaultUser: {
       email: "cashier@hotel.local",
       fullName: "POS Cashier"
@@ -143,10 +153,10 @@ export const roleAccessLevels = [
     key: "storekeeper",
     level: 35,
     name: "Storekeeper",
-    description: "Stores access for inventory visibility and purchasing handoff.",
+    description: "Main Store access for inventory visibility and purchasing handoff.",
     home: "Inventory workspace",
     modules: ["dashboard", "inventory", "purchasing"],
-    permissionCodes: ["dashboard.view", "inventory.view", "purchasing.view"],
+    permissionCodes: ["dashboard.view", "inventory.view", "inventory.store.main", "purchasing.view"],
     defaultUser: {
       email: "storekeeper@hotel.local",
       fullName: "Storekeeper"

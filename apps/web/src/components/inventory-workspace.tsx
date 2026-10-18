@@ -20,6 +20,8 @@ type StoreLocation = {
   id: string;
   name: string;
   type: string;
+  code: string;
+  usageAllowed: boolean;
 };
 
 type StockLine = {
@@ -66,6 +68,7 @@ type DailyUsageResponse = {
 type InventoryWorkspaceResponse = {
   items: InventoryItem[];
   locations: StoreLocation[];
+  transferTargets: StoreLocation[];
   stock: StockLine[];
   movements: Movement[];
 };
@@ -76,13 +79,14 @@ const BAR_RESTOCK_THRESHOLD = 3;
 export function InventoryWorkspace() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [locations, setLocations] = useState<StoreLocation[]>([]);
+  const [transferTargets, setTransferTargets] = useState<StoreLocation[]>([]);
   const [stock, setStock] = useState<StockLine[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Loading saved inventory...");
   const [usageDate, setUsageDate] = useState(todayIso());
   const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([]);
-  const [usageMessage, setUsageMessage] = useState("Note what each section used today. This log does not change stock balances.");
+  const [usageMessage, setUsageMessage] = useState("Note what your outlet used today. This log does not change stock balances.");
   const [usageFilter, setUsageFilter] = useState("ALL");
   const [usageForm, setUsageForm] = useState({
     locationId: "",
@@ -127,10 +131,11 @@ export function InventoryWorkspace() {
     [items, locations, stock]
   );
 
+  const usageLocations = useMemo(() => locations.filter((location) => location.usageAllowed), [locations]);
   const visibleUsage = usageFilter === "ALL" ? usageRecords : usageRecords.filter((record) => record.locationId === usageFilter);
   const usageTotals = useMemo(
     () =>
-      locations.map((location) => {
+      usageLocations.map((location) => {
         const records = usageRecords.filter((record) => record.locationId === location.id);
         return {
           location,
@@ -138,7 +143,7 @@ export function InventoryWorkspace() {
           value: records.reduce((sum, record) => sum + record.value, 0)
         };
       }),
-    [locations, usageRecords]
+    [usageLocations, usageRecords]
   );
 
   const barRestockRows = stockRows.filter((row) => row.location?.type === "BAR" && row.quantity < BAR_RESTOCK_THRESHOLD);
@@ -169,7 +174,7 @@ export function InventoryWorkspace() {
     event.preventDefault();
     const quantity = Number(usageForm.quantity);
     const item = items.find((entry) => entry.id === usageForm.itemId);
-    const location = locations.find((entry) => entry.id === usageForm.locationId);
+    const location = usageLocations.find((entry) => entry.id === usageForm.locationId);
 
     if (!item || !location || !Number.isFinite(quantity) || quantity <= 0) {
       setUsageMessage("Choose a section, material, and quantity used before saving.");
@@ -205,12 +210,16 @@ export function InventoryWorkspace() {
 
     const nextItems = result.data.items;
     const nextLocations = result.data.locations;
+    const nextTargets = result.data.transferTargets ?? nextLocations;
+    const nextUsageLocations = nextLocations.filter((location) => location.usageAllowed);
     const defaultItemId = nextItems[0]?.id ?? "";
     const defaultLocationId = nextLocations[0]?.id ?? "";
-    const targetLocationId = nextLocations.find((location) => location.id !== defaultLocationId)?.id ?? defaultLocationId;
+    const defaultUsageLocationId = nextUsageLocations[0]?.id ?? "";
+    const targetLocationId = nextTargets.find((location) => location.id !== defaultLocationId)?.id ?? "";
 
     setItems(nextItems);
     setLocations(nextLocations);
+    setTransferTargets(nextTargets);
     setStock(result.data.stock);
     setMovements(result.data.movements);
     setReceiptForm((current) => ({
@@ -220,15 +229,21 @@ export function InventoryWorkspace() {
     }));
     setUsageForm((current) => ({
       ...current,
-      locationId: nextLocations.some((location) => location.id === current.locationId) ? current.locationId : defaultLocationId
+      locationId: nextUsageLocations.some((location) => location.id === current.locationId) ? current.locationId : defaultUsageLocationId
     }));
     setIssueForm((current) => ({
       ...current,
       itemId: nextItems.some((item) => item.id === current.itemId) ? current.itemId : defaultItemId,
       sourceLocationId: nextLocations.some((location) => location.id === current.sourceLocationId) ? current.sourceLocationId : defaultLocationId,
-      targetLocationId: nextLocations.some((location) => location.id === current.targetLocationId) ? current.targetLocationId : targetLocationId
+      targetLocationId: nextTargets.some((location) => location.id === current.targetLocationId) ? current.targetLocationId : targetLocationId
     }));
-    setMessage(nextItems.length ? successMessage : "Inventory is ready. Add your first material, then receive stock for it.");
+    setMessage(
+      nextLocations.length === 0
+        ? "You have not been given access to any store. Ask an administrator to tick your store."
+        : nextItems.length
+          ? successMessage
+          : "Inventory is ready. Add your first material, then receive stock for it."
+    );
   }
 
   async function createMaterial(event: FormEvent<HTMLFormElement>) {
@@ -294,7 +309,7 @@ export function InventoryWorkspace() {
     const quantity = Number(issueForm.quantity);
     const item = items.find((entry) => entry.id === issueForm.itemId);
     const source = locations.find((entry) => entry.id === issueForm.sourceLocationId);
-    const target = locations.find((entry) => entry.id === issueForm.targetLocationId);
+    const target = transferTargets.find((entry) => entry.id === issueForm.targetLocationId);
     const sourceLine = stock.find((line) => line.itemId === issueForm.itemId && line.locationId === issueForm.sourceLocationId);
 
     if (!item || !source || quantity <= 0 || !sourceLine) {
@@ -339,6 +354,13 @@ export function InventoryWorkspace() {
           <div>
             <h3 className="font-bold">Inventory Control Workspace</h3>
             <p className="text-sm text-muted-foreground">Receive, issue, transfer, and monitor hotel stock balances.</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {locations.map((location) => (
+                <Badge key={location.id} tone="primary">
+                  {location.name}
+                </Badge>
+              ))}
+            </div>
           </div>
           <Button type="button" variant="secondary" onClick={() => void loadData()} disabled={busy}>
             <RefreshCcw className="h-4 w-4" aria-hidden="true" />
@@ -437,7 +459,9 @@ export function InventoryWorkspace() {
               <NotebookPen className="h-4 w-4 text-primary" aria-hidden="true" />
               <div>
                 <h4 className="font-bold">Daily Usage Recorder</h4>
-                <p className="text-xs text-muted-foreground">Record only. Bar stock is still deducted automatically by POS sales.</p>
+                <p className="text-xs text-muted-foreground">
+                  Record goods used in your own outlet only. Bar stock is still deducted automatically by POS sales.
+                </p>
               </div>
             </div>
             <Input
@@ -450,7 +474,12 @@ export function InventoryWorkspace() {
             />
           </div>
 
-          <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-3">
+          {usageLocations.length === 0 ? (
+            <p className="border-b border-border p-4 text-sm text-muted-foreground">
+              Goods used are recorded by the Bar and Restaurant outlets. You do not have access to either outlet store.
+            </p>
+          ) : null}
+          <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-2">
             {usageTotals.map(({ location, entries, value }) => (
               <div key={location.id} className="rounded border border-border bg-background/70 p-3">
                 <p className="text-sm text-muted-foreground">{sectionLabel(location)}</p>
@@ -469,7 +498,7 @@ export function InventoryWorkspace() {
                 onChange={(event) => setUsageForm({ ...usageForm, locationId: event.target.value })}
               >
                 <option value="">Select section</option>
-                {locations.map((location) => (
+                {usageLocations.map((location) => (
                   <option key={location.id} value={location.id}>
                     {sectionLabel(location)}
                   </option>
@@ -508,7 +537,7 @@ export function InventoryWorkspace() {
                 onChange={(event) => setUsageForm({ ...usageForm, notes: event.target.value })}
                 placeholder="Notes (optional)"
               />
-              <Button disabled={busy || items.length === 0 || locations.length === 0}>
+              <Button disabled={busy || items.length === 0 || usageLocations.length === 0}>
                 <ClipboardList className="h-4 w-4" aria-hidden="true" />
                 Record usage
               </Button>
@@ -517,7 +546,7 @@ export function InventoryWorkspace() {
           </form>
 
           <div className="flex flex-wrap gap-2 px-4 pt-3">
-            {[{ id: "ALL", label: "All sections" }, ...locations.map((location) => ({ id: location.id, label: sectionLabel(location) }))].map((option) => (
+            {[{ id: "ALL", label: "All sections" }, ...usageLocations.map((location) => ({ id: location.id, label: sectionLabel(location) }))].map((option) => (
               <button
                 key={option.id}
                 type="button"
@@ -725,7 +754,7 @@ export function InventoryWorkspace() {
                 onChange={(event) => setIssueForm({ ...issueForm, targetLocationId: event.target.value })}
               >
                 <option value="">Select target store</option>
-                {locations.map((location) => (
+                {transferTargets.filter((location) => location.id !== issueForm.sourceLocationId).map((location) => (
                   <option key={location.id} value={location.id}>
                     {location.name}
                   </option>
@@ -784,7 +813,7 @@ export function InventoryWorkspace() {
 }
 
 function sectionLabel(location: { name: string; type: string }) {
-  if (location.type === "KITCHEN") return "Restaurant (Kitchen)";
+  if (location.type === "KITCHEN") return "Restaurant";
   if (location.type === "BAR") return "Bar";
   if (location.type === "STORE") return "Main Store";
   return location.name;
