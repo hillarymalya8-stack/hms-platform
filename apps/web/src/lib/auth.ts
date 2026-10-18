@@ -1,4 +1,4 @@
-import { outletScopePermissionCodes, roleAccessLevels, systemAccessGroups } from "@hms/shared";
+import { outletScopePermissionCodes, systemAccessGroups } from "@hms/shared";
 
 export type AuthenticatedUser = {
   id: string;
@@ -25,52 +25,14 @@ export type StoredSession = {
 
 const accessTokenKey = "hms_access_token";
 const sessionKey = "hms_session";
-const demoOrganizationId = "demo-organization";
-const demoPropertyId = "demo-property-main";
-
-export const demoAuthPassword = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? "ChangeMe123!";
-
+// The API is served from this same site at /api (a Netlify Function) unless NEXT_PUBLIC_API_URL points elsewhere.
 export function getApiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
-}
-
-export function isDemoAuthEnabled() {
-  return process.env.NEXT_PUBLIC_ENABLE_DEMO_AUTH === "true" || !process.env.NEXT_PUBLIC_API_URL;
-}
-
-export const demoUsers: AuthenticatedUser[] = roleAccessLevels
-  .filter((accessLevel) => Boolean(accessLevel.defaultUser))
-  .map((accessLevel) => ({
-    id: `demo-${accessLevel.key}`,
-    email: accessLevel.defaultUser!.email,
-    fullName: accessLevel.defaultUser!.fullName,
-    organizationId: demoOrganizationId,
-    defaultPropertyId: demoPropertyId,
-    permissions: [...accessLevel.permissionCodes]
-  }));
-
-export function loginWithDemoCredentials(email: string, password: string): LoginResponse | null {
-  if (!isDemoAuthEnabled()) return null;
-
-  const acceptedPassword = password === demoAuthPassword || password === "demo-password";
-  if (!acceptedPassword) return null;
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const user = demoUsers.find((entry) => entry.email.toLowerCase() === normalizedEmail);
-  if (!user) return null;
-
-  return {
-    accessToken: `demo.${user.id}.${Date.now()}`,
-    expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-    user
-  };
+  return process.env.NEXT_PUBLIC_API_URL || "/api";
 }
 
 // Re-reads the signed-in user from the API so access changes made by an admin apply on the next page load.
 // Returns null when the session is no longer valid, or the current session when it cannot be checked.
 export async function refreshSession(session: StoredSession): Promise<StoredSession | null> {
-  if (session.accessToken.startsWith("demo.")) return session;
-
   try {
     const response = await fetch(`${getApiBaseUrl()}/users/me`, {
       headers: { Authorization: `Bearer ${session.accessToken}` }
@@ -112,7 +74,8 @@ export function readSession(): StoredSession | null {
   try {
     const session = JSON.parse(rawSession) as StoredSession;
     if (!session.user || session.accessToken !== accessToken) return null;
-    if (accessToken.startsWith("demo.") && !isDemoAuthEnabled()) {
+    // Sessions left over from the retired demo sign-in are not valid against the live API.
+    if (accessToken.startsWith("demo.")) {
       clearSession();
       return null;
     }

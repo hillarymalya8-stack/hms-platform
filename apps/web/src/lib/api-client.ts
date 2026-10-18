@@ -1,4 +1,4 @@
-import { clearSession } from "@/lib/auth";
+import { clearSession, getApiBaseUrl } from "@/lib/auth";
 
 export type ApiResult<T> =
   | {
@@ -11,7 +11,7 @@ export type ApiResult<T> =
     };
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<ApiResult<T>> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
+  const baseUrl = getApiBaseUrl();
   const token = typeof window !== "undefined" ? window.localStorage.getItem("hms_access_token") : null;
 
   try {
@@ -53,7 +53,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   } catch {
     return {
       ok: false,
-      error: "API is not reachable. Start the database and API, then try again."
+      error: "The hotel system could not be reached. Check the internet connection and try again."
     };
   }
 }

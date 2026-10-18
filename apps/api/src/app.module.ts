@@ -13,7 +13,9 @@ import { OrganizationsModule } from "./modules/organizations/organizations.modul
 import { PersistenceModule } from "./modules/persistence/persistence.module";
 import { PosModule } from "./modules/pos/pos.module";
 import { PropertiesModule } from "./modules/properties/properties.module";
+import { PurchasingModule } from "./modules/purchasing/purchasing.module";
 import { ReportsModule } from "./modules/reports/reports.module";
+import { SetupModule } from "./modules/setup/setup.module";
 import { JwtAuthGuard } from "./common/auth/jwt-auth.guard";
 import { PermissionsGuard } from "./common/auth/permissions.guard";
 import { PrismaModule } from "./common/prisma/prisma.module";
@@ -32,8 +34,10 @@ import { UsersModule } from "./modules/users/users.module";
     UsersModule,
     OrganizationsModule,
     PropertiesModule,
+    PurchasingModule,
     PersistenceModule,
     ReportsModule,
+    SetupModule,
     AccountingModule,
     AuditModule,
     HealthModule

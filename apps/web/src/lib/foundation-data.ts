@@ -1,8 +1,6 @@
 import {
   Banknote,
   BedDouble,
-  BookOpenCheck,
-  Building2,
   ClipboardCheck,
   Database,
   FileBarChart2,
@@ -12,7 +10,6 @@ import {
   ReceiptText,
   ShieldCheck,
   Store,
-  UserCheck,
   UsersRound,
   Wifi,
   Warehouse
@@ -27,37 +24,6 @@ export const navigation = [
   { label: "Finance", icon: Landmark, href: "/finance" },
   { label: "Reports", icon: FileBarChart2, href: "/reports" },
   { label: "Administration", icon: UsersRound, href: "/administration" }
-];
-
-export const foundationCards = [
-  {
-    label: "Organization",
-    value: "Hotel Group",
-    detail: "Multi-property tenant model",
-    icon: Building2,
-    tone: "success"
-  },
-  {
-    label: "Default Property",
-    value: "Main Hotel",
-    detail: "Currency, fiscal year, business date",
-    icon: BookOpenCheck,
-    tone: "primary"
-  },
-  {
-    label: "Access Control",
-    value: "19 permissions",
-    detail: "Backend-enforced RBAC",
-    icon: ShieldCheck,
-    tone: "warning"
-  },
-  {
-    label: "Accounting Guard",
-    value: "Balanced only",
-    detail: "Debits must equal credits",
-    icon: Banknote,
-    tone: "danger"
-  }
 ];
 
 export const phaseStatus = [
@@ -78,25 +44,12 @@ export const phaseStatus = [
   { label: "Backend persistence", status: "Ready", icon: Database }
 ];
 
-export const hotelCoreCards = [
-  { label: "Room Types", value: "Live", detail: "Rate and room class records", icon: BedDouble },
-  { label: "Rooms", value: "Live", detail: "Operational room inventory", icon: Building2 },
-  { label: "Guest Profiles", value: "Ready", detail: "Identity and contact records", icon: UsersRound },
-  { label: "Check-in Flow", value: "Folio opens", detail: "Room moves to occupied", icon: UserCheck }
-];
-
 export const reservationRules = [
   "Confirmed, tentative, and checked-in reservations block overlapping bookings.",
   "A guest must exist before a reservation can be created.",
   "A room must be assigned before check-in.",
   "Check-in creates one open folio for the primary guest.",
   "Check-out requires a settled folio and marks the room dirty."
-];
-
-export const sampleJournal = [
-  { account: "1100 Cash", debit: "100.00", credit: "" },
-  { account: "4200 Restaurant Revenue", debit: "", credit: "86.21" },
-  { account: "2200 Tax Payable", debit: "", credit: "13.79" }
 ];
 
 export const paymentPolicies = [

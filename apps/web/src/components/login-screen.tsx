@@ -1,20 +1,13 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, KeyRound, Landmark, LogIn, ShieldCheck, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FirstRunSetup } from "@/components/first-run-setup";
 import { SystemStatus } from "@/components/system-status";
-import {
-  demoAuthPassword,
-  getApiBaseUrl,
-  isDemoAuthEnabled,
-  loginWithDemoCredentials,
-  resolveHomePath,
-  saveSession,
-  type LoginResponse
-} from "@/lib/auth";
+import { getApiBaseUrl, resolveHomePath, saveSession, type LoginResponse } from "@/lib/auth";
 
 type LoginState = "idle" | "loading" | "success" | "error";
 
@@ -28,13 +21,25 @@ const loginSystems = [
 export function LoginScreen() {
   const router = useRouter();
   const apiUrl = useMemo(() => getApiBaseUrl(), []);
-  const demoMode = useMemo(() => isDemoAuthEnabled(), []);
-  const [email, setEmail] = useState("admin@hotel.local");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [state, setState] = useState<LoginState>("idle");
-  const [message, setMessage] = useState(
-    demoMode ? `Demo mode is ready. Use admin@hotel.local / ${demoAuthPassword}.` : "Use your assigned system credential."
-  );
+  const [message, setMessage] = useState("Use your assigned system credential.");
+  const [setup, setSetup] = useState<{ needsSetup: boolean; setupKeyRequired: boolean } | null>(null);
+
+  // A brand-new deployment has no staff accounts yet; offer the one-time hotel setup instead of the login form.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${apiUrl}/setup/status`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!cancelled && body) setSetup(body);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiUrl]);
 
   function openAssignedSystem(result: LoginResponse) {
     saveSession(result);
@@ -50,19 +55,6 @@ export function LoginScreen() {
     event.preventDefault();
     setState("loading");
     setMessage("Checking credential and access level...");
-
-    if (demoMode) {
-      const result = loginWithDemoCredentials(email, password);
-
-      if (!result) {
-        setState("error");
-        setMessage(`Use a seeded staff email and password ${demoAuthPassword}.`);
-        return;
-      }
-
-      openAssignedSystem(result);
-      return;
-    }
 
     try {
       const response = await fetch(`${apiUrl}/auth/login`, {
@@ -82,7 +74,7 @@ export function LoginScreen() {
       openAssignedSystem((await response.json()) as LoginResponse);
     } catch {
       setState("error");
-      setMessage("The API or database is offline. Start the backend services, then sign in again.");
+      setMessage("The hotel system could not be reached. Check the connection and try again.");
     }
   }
 
@@ -117,57 +109,66 @@ export function LoginScreen() {
           <div className="w-full max-w-xl space-y-4">
             <SystemStatus />
 
-            <form onSubmit={submit} className="rounded border border-border bg-white p-5 shadow-panel">
-              <div className="mb-5 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-primary-foreground">
-                  <KeyRound className="h-5 w-5" aria-hidden="true" />
+            {setup?.needsSetup ? (
+              <FirstRunSetup
+                apiUrl={apiUrl}
+                setupKeyRequired={setup.setupKeyRequired}
+                onComplete={openAssignedSystem}
+                onAlreadySetUp={() => setSetup({ needsSetup: false, setupKeyRequired: false })}
+              />
+            ) : (
+              <form onSubmit={submit} className="rounded border border-border bg-white p-5 shadow-panel">
+                <div className="mb-5 flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-primary-foreground">
+                    <KeyRound className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">Staff Login</h2>
+                    <p className="text-sm text-muted-foreground">Role-based routing is applied after sign in.</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold">Staff Login</h2>
-                  <p className="text-sm text-muted-foreground">Role-based routing is applied after sign in.</p>
+  
+                <div className="space-y-3">
+                  <label className="block space-y-1.5">
+                    <span className="text-sm font-medium">Username or email</span>
+                    <Input
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      type="text"
+                      autoCapitalize="none"
+                      autoComplete="username"
+                    />
+                  </label>
+  
+                  <label className="block space-y-1.5">
+                    <span className="text-sm font-medium">Password</span>
+                    <Input
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      type="password"
+                      autoComplete="current-password"
+                    />
+                  </label>
                 </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="block space-y-1.5">
-                  <span className="text-sm font-medium">Username or email</span>
-                  <Input
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    type="text"
-                    autoCapitalize="none"
-                    autoComplete="username"
-                  />
-                </label>
-
-                <label className="block space-y-1.5">
-                  <span className="text-sm font-medium">Password</span>
-                  <Input
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    type="password"
-                    autoComplete="current-password"
-                  />
-                </label>
-              </div>
-
-              <Button className="mt-4 w-full" disabled={state === "loading" || !email.trim() || !password}>
-                <LogIn className="h-4 w-4" aria-hidden="true" />
-                {state === "loading" ? "Signing in" : "Sign in"}
-              </Button>
-
-              <p
-                className={
-                  state === "error"
-                    ? "mt-3 text-sm font-medium text-danger"
-                    : state === "success"
-                      ? "mt-3 text-sm font-medium text-success"
-                      : "mt-3 text-sm text-muted-foreground"
-                }
-              >
-                {message}
-              </p>
-            </form>
+  
+                <Button className="mt-4 w-full" disabled={state === "loading" || !email.trim() || !password}>
+                  <LogIn className="h-4 w-4" aria-hidden="true" />
+                  {state === "loading" ? "Signing in" : "Sign in"}
+                </Button>
+  
+                <p
+                  className={
+                    state === "error"
+                      ? "mt-3 text-sm font-medium text-danger"
+                      : state === "success"
+                        ? "mt-3 text-sm font-medium text-success"
+                        : "mt-3 text-sm text-muted-foreground"
+                  }
+                >
+                  {message}
+                </p>
+              </form>
+            )}
           </div>
         </section>
       </div>

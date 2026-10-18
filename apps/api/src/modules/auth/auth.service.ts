@@ -3,6 +3,7 @@ import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import bcrypt from "bcryptjs";
 import jwt, { Secret, SignOptions } from "jsonwebtoken";
+import { JwtSecretService } from "../../common/auth/jwt-secret.service";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { IamService } from "../iam/iam.service";
 import { LoginDto } from "./dto/login.dto";
@@ -12,6 +13,7 @@ export class AuthService {
   constructor(
     private readonly config: ConfigService,
     private readonly iam: IamService,
+    private readonly jwtSecret: JwtSecretService,
     private readonly prisma: PrismaService
   ) {}
 
@@ -32,7 +34,7 @@ export class AuthService {
 
     const sessionId = randomUUID();
     const expiresAt = this.resolveExpiry();
-    const secret = (this.config.get<string>("JWT_SECRET") ?? "change-this-before-production") as Secret;
+    const secret = (await this.jwtSecret.getSecret()) as Secret;
     const signOptions: SignOptions = {
       expiresIn: (this.config.get<string>("JWT_EXPIRES_IN") ?? "8h") as SignOptions["expiresIn"]
     };

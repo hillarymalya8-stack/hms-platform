@@ -1,14 +1,11 @@
 import {
   AlertTriangle,
-  CalendarDays,
   CheckCircle2,
-  CircleDollarSign,
   ClipboardCheck,
   Cloud,
   CreditCard,
   Database,
   FileBarChart2,
-  FileClock,
   Landmark,
   ListChecks,
   ReceiptText,
@@ -29,22 +26,22 @@ import { ReportsWorkspace } from "@/components/reports-workspace";
 import { RouteGuard } from "@/components/route-guard";
 import { SystemStatus } from "@/components/system-status";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import { MobileNavigation } from "@/components/mobile-navigation";
 import {
-  foundationCards,
-  hotelCoreCards,
-  navigation,
-  paymentPolicies,
-  phaseStatus,
-  reservationRules,
-  sampleJournal
-} from "@/lib/foundation-data";
+  DashboardDataProvider,
+  DashboardHeaderActions,
+  DashboardHeaderBadges,
+  DashboardKpiCards,
+  HotelCoreCards,
+  LatestJournalPanel
+} from "@/components/dashboard-live-summary";
+import { navigation, paymentPolicies, phaseStatus, reservationRules } from "@/lib/foundation-data";
 
 export default function Home() {
   return (
     <RouteGuard requiredPermissions={["dashboard.view"]}>
+      <DashboardDataProvider>
       <main className="responsive-workspace min-h-screen">
         <div className="grid min-h-screen lg:grid-cols-[264px_1fr]">
         <aside className="border-b border-border bg-white/88 px-4 py-4 lg:border-b-0 lg:border-r lg:py-5">
@@ -100,8 +97,7 @@ export default function Home() {
           <header id="dashboard" className="mb-6 scroll-mt-5 flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge tone="primary">Main Hotel</Badge>
-                <Badge>Business date: Aug 31, 2026</Badge>
+                <DashboardHeaderBadges />
               </div>
               <h1 className="text-2xl font-bold leading-tight md:text-3xl">
                 Hotel Operations System
@@ -111,14 +107,7 @@ export default function Home() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary">
-                <CalendarDays className="h-4 w-4" aria-hidden="true" />
-                Open date
-              </Button>
-              <Button>
-                <FileClock className="h-4 w-4" aria-hidden="true" />
-                Audit log
-              </Button>
+              <DashboardHeaderActions />
             </div>
           </header>
 
@@ -126,20 +115,7 @@ export default function Home() {
             <SystemStatus />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {foundationCards.map((card) => (
-              <Panel key={card.label} className="p-4">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-muted-foreground">{card.label}</span>
-                  <div className="flex h-9 w-9 items-center justify-center rounded bg-muted">
-                    <card.icon className="h-4 w-4" aria-hidden="true" />
-                  </div>
-                </div>
-                <p className="text-xl font-bold">{card.value}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{card.detail}</p>
-              </Panel>
-            ))}
-          </div>
+          <DashboardKpiCards />
 
           <div className="mt-5 grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
             <Panel className="p-5">
@@ -199,18 +175,7 @@ export default function Home() {
               <Badge tone="primary">Live workflow</Badge>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {hotelCoreCards.map((card) => (
-                <div key={card.label} className="rounded border border-border bg-background/70 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <span className="text-sm font-medium text-muted-foreground">{card.label}</span>
-                    <card.icon className="h-4 w-4 text-primary" aria-hidden="true" />
-                  </div>
-                  <p className="text-xl font-bold">{card.value}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{card.detail}</p>
-                </div>
-              ))}
-            </div>
+            <HotelCoreCards />
 
             <div className="mt-5 rounded border border-border bg-white">
               <div className="border-b border-border px-4 py-3 text-sm font-bold">Reservation control rules</div>
@@ -366,48 +331,7 @@ export default function Home() {
           </Panel>
 
           <div className="mt-5 grid gap-5 xl:grid-cols-2">
-            <Panel className="overflow-hidden">
-              <div className="border-b border-border p-5">
-                <div className="flex items-center gap-3">
-                  <CircleDollarSign className="h-5 w-5 text-primary" aria-hidden="true" />
-                  <div>
-                    <h2 className="text-lg font-bold">Accounting Validation</h2>
-                    <p className="text-sm text-muted-foreground">Operational transactions will post through this balance rule.</p>
-                  </div>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[520px] border-collapse text-sm">
-                  <thead className="bg-muted/70 text-left text-xs uppercase text-muted-foreground">
-                    <tr>
-                      <th className="px-5 py-3 font-semibold">Account</th>
-                      <th className="px-5 py-3 text-right font-semibold">Debit</th>
-                      <th className="px-5 py-3 text-right font-semibold">Credit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sampleJournal.map((line) => (
-                      <tr key={line.account} className="border-t border-border">
-                        <td className="px-5 py-3 font-medium">{line.account}</td>
-                        <td className="px-5 py-3 text-right tabular-nums">{line.debit || "-"}</td>
-                        <td className="px-5 py-3 text-right tabular-nums">{line.credit || "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t border-border bg-background/70 font-bold">
-                    <tr>
-                      <td className="px-5 py-3">Totals</td>
-                      <td className="px-5 py-3 text-right tabular-nums">100.00</td>
-                      <td className="px-5 py-3 text-right tabular-nums">100.00</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-              <div className="flex items-center gap-2 border-t border-border px-5 py-4 text-sm font-semibold text-success">
-                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                Balanced journal accepted
-              </div>
-            </Panel>
+            <LatestJournalPanel />
 
             <Panel className="overflow-hidden">
               <div className="border-b border-border p-5">
@@ -441,6 +365,7 @@ export default function Home() {
         </section>
         </div>
       </main>
+      </DashboardDataProvider>
     </RouteGuard>
   );
 }

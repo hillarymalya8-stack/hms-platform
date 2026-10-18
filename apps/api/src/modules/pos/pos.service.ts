@@ -48,6 +48,7 @@ export class PosService {
       where: {
         outletId,
         available: true,
+        productVariant: { active: true, product: { active: true } },
         outlet: {
           propertyId,
           outletType: { in: allowedOutletTypes(user) }
@@ -353,7 +354,8 @@ export class PosService {
         where: {
           outletId: outlet.id,
           productVariantId: { in: variants },
-          available: true
+          available: true,
+          productVariant: { active: true, product: { active: true } }
         },
         include: {
           productVariant: {

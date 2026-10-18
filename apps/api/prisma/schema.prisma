@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -1364,4 +1365,13 @@ model JournalLine {
   @@index([accountId])
   @@index([departmentId])
   @@map("journal_lines")
+}
+
+// Server-generated secrets (e.g. the sign-in token key) for deployments that do not set them as environment variables.
+model SystemSecret {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("system_secrets")
 }
