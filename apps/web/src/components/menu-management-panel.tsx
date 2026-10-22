@@ -18,6 +18,7 @@ type OutletPrice = {
   outletName: string;
   outletType: OutletType;
   price: string;
+  priceUsd: string | null;
   taxRate: string;
   available: boolean;
 };
@@ -41,13 +42,22 @@ type ProductDraft = {
   sku: string;
   categoryId: string;
   price: string;
+  priceUsd: string;
   taxPercent: string;
   outletIds: string[];
 };
 
-type EditDraft = { productId: string; name: string; categoryId: string; price: string; taxPercent: string; outletIds: string[] };
+type EditDraft = {
+  productId: string;
+  name: string;
+  categoryId: string;
+  price: string;
+  priceUsd: string;
+  taxPercent: string;
+  outletIds: string[];
+};
 
-const emptyDraft: ProductDraft = { name: "", sku: "", categoryId: "", price: "", taxPercent: "0", outletIds: [] };
+const emptyDraft: ProductDraft = { name: "", sku: "", categoryId: "", price: "", priceUsd: "", taxPercent: "0", outletIds: [] };
 
 export function MenuManagementPanel({ canManageTables = false }: { canManageTables?: boolean }) {
   const [menu, setMenu] = useState<MenuResponse>({ outlets: [], categories: [], products: [] });
@@ -154,13 +164,18 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
     event.preventDefault();
     const taxRate = percentToFraction(draft.taxPercent);
     const price = normalizeAmount(draft.price);
+    const priceUsd = normalizeOptionalAmount(draft.priceUsd);
 
     if (!draft.name.trim() || !draft.sku.trim() || !draft.categoryId) {
       report("Enter a name, SKU, and category.", true);
       return;
     }
     if (price === null) {
-      report("Enter a valid price, for example 12.50.", true);
+      report("Enter a valid TSh price, for example 5000.", true);
+      return;
+    }
+    if (priceUsd === null) {
+      report("Enter a valid USD price, for example 2.50, or leave it empty.", true);
       return;
     }
     if (taxRate === null) {
@@ -180,6 +195,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
         sku: draft.sku.trim(),
         categoryId: draft.categoryId,
         price,
+        priceUsd: priceUsd || undefined,
         taxRate,
         outletIds: draft.outletIds
       })
@@ -215,15 +231,16 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
   async function saveEdit(product: MenuProduct) {
     if (!edit) return;
     const price = normalizeAmount(edit.price);
+    const priceUsd = normalizeOptionalAmount(edit.priceUsd);
     const taxRate = percentToFraction(edit.taxPercent);
-    if (!edit.name.trim() || price === null || taxRate === null) {
-      report("Enter a name, a valid price, and a tax rate between 0 and 100.", true);
+    if (!edit.name.trim() || price === null || priceUsd === null || taxRate === null) {
+      report("Enter a name, a valid TSh price, an optional USD price, and a tax rate between 0 and 100.", true);
       return;
     }
 
     const saved = await patchProduct(
       product,
-      { name: edit.name.trim(), categoryId: edit.categoryId, price, taxRate, outletIds: edit.outletIds },
+      { name: edit.name.trim(), categoryId: edit.categoryId, price, priceUsd, taxRate, outletIds: edit.outletIds },
       `${edit.name.trim()} updated.`
     );
     if (saved) setEdit(null);
@@ -236,6 +253,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
       name: product.name,
       categoryId: product.category.id,
       price: outlets[0]?.price ?? product.variants[0]?.basePrice ?? "0.00",
+      priceUsd: outlets[0]?.priceUsd ?? "",
       taxPercent: fractionToPercent(outlets[0]?.taxRate ?? "0"),
       outletIds: outlets.map((entry) => entry.outletId)
     });
@@ -373,21 +391,37 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
                   </option>
                 ))}
             </select>
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                aria-label="Price"
-                inputMode="decimal"
-                value={draft.price}
-                onChange={(event) => setDraft({ ...draft, price: event.target.value })}
-                placeholder="Price"
-              />
-              <Input
-                aria-label="Tax rate percent"
-                inputMode="decimal"
-                value={draft.taxPercent}
-                onChange={(event) => setDraft({ ...draft, taxPercent: event.target.value })}
-                placeholder="Tax %"
-              />
+            <div className="grid grid-cols-3 gap-3">
+              <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
+                Price (TSh)
+                <Input
+                  aria-label="Price in TSh"
+                  inputMode="decimal"
+                  value={draft.price}
+                  onChange={(event) => setDraft({ ...draft, price: event.target.value })}
+                  placeholder="e.g. 5000"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
+                Price (USD)
+                <Input
+                  aria-label="Price in USD"
+                  inputMode="decimal"
+                  value={draft.priceUsd}
+                  onChange={(event) => setDraft({ ...draft, priceUsd: event.target.value })}
+                  placeholder="e.g. 2.00"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
+                Tax %
+                <Input
+                  aria-label="Tax rate percent"
+                  inputMode="decimal"
+                  value={draft.taxPercent}
+                  onChange={(event) => setDraft({ ...draft, taxPercent: event.target.value })}
+                  placeholder="Tax %"
+                />
+              </label>
             </div>
           </div>
           <OutletPicker
@@ -396,7 +430,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
             onChange={(outletIds) => setDraft({ ...draft, outletIds })}
           />
           <p className="mt-2 text-xs text-muted-foreground">
-            Price includes no tax; tax is added at the till. Bar sales deduct Bar Store stock when the SKU matches an inventory item.
+            Prices exclude tax; tax is added at the till. The POS uses the TSh or USD price depending on the currency the cashier sells in; leave USD empty for TSh-only items. Bar sales deduct Bar Store stock when the SKU matches an inventory item.
           </p>
           <Button className="mt-3" disabled={busy || menu.outlets.length === 0}>
             <Plus className="h-4 w-4" aria-hidden="true" />
@@ -458,13 +492,14 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
       </div>
 
       <div className="mt-3 overflow-x-auto rounded border border-border">
-        <table className="w-full min-w-[720px] text-sm">
+        <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-3 py-2 font-semibold">Item</th>
               <th className="px-3 py-2 font-semibold">Category</th>
               <th className="px-3 py-2 font-semibold">Sold at</th>
-              <th className="px-3 py-2 text-right font-semibold">Price</th>
+              <th className="px-3 py-2 text-right font-semibold">Price (TSh)</th>
+              <th className="px-3 py-2 text-right font-semibold">Price (USD)</th>
               <th className="px-3 py-2 text-right font-semibold">Tax</th>
               <th className="px-3 py-2 text-right font-semibold">Actions</th>
             </tr>
@@ -472,7 +507,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
           <tbody className="divide-y divide-border">
             {visibleProducts.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
                   {menu.products.length === 0 ? "The menu is empty. Add your first item above." : "No items match this filter."}
                 </td>
               </tr>
@@ -480,6 +515,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
               visibleProducts.map((product) => {
                 const outlets = product.variants[0]?.outlets ?? [];
                 const prices = Array.from(new Set(outlets.map((entry) => entry.price)));
+                const usdPrices = Array.from(new Set(outlets.map((entry) => entry.priceUsd).filter((value): value is string => Boolean(value))));
                 const taxes = Array.from(new Set(outlets.map((entry) => entry.taxRate)));
                 const available = outlets.length > 0 && outlets.every((entry) => entry.available);
                 const editing = edit?.productId === product.id ? edit : null;
@@ -509,7 +545,10 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
                         <OutletPicker compact outlets={menu.outlets} selected={editing.outletIds} onChange={(outletIds) => setEdit({ ...editing, outletIds })} />
                       </td>
                       <td className="px-3 py-2">
-                        <Input aria-label="Edit price" inputMode="decimal" className="text-right" value={editing.price} onChange={(event) => setEdit({ ...editing, price: event.target.value })} />
+                        <Input aria-label="Edit TSh price" inputMode="decimal" className="text-right" value={editing.price} onChange={(event) => setEdit({ ...editing, price: event.target.value })} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input aria-label="Edit USD price" inputMode="decimal" className="text-right" value={editing.priceUsd} placeholder="None" onChange={(event) => setEdit({ ...editing, priceUsd: event.target.value })} />
                       </td>
                       <td className="px-3 py-2">
                         <Input aria-label="Edit tax percent" inputMode="decimal" className="text-right" value={editing.taxPercent} onChange={(event) => setEdit({ ...editing, taxPercent: event.target.value })} />
@@ -552,6 +591,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
                     <td className="px-3 py-2 text-right tabular-nums">
                       {prices.length === 0 ? formatAmount(product.variants[0]?.basePrice ?? "0") : prices.map(formatAmount).join(" / ")}
                     </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{usdPrices.length ? usdPrices.map(formatAmount).join(" / ") : "-"}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{taxes.length ? taxes.map((rate) => `${fractionToPercent(rate)}%`).join(" / ") : "-"}</td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex flex-wrap justify-end gap-1">
@@ -714,6 +754,13 @@ function normalizeAmount(value: string) {
   const trimmed = value.trim();
   if (!/^\d{1,12}(\.\d{1,4})?$/.test(trimmed)) return null;
   return trimmed;
+}
+
+// Empty means "no USD price"; returns null only when the value is present but invalid.
+function normalizeOptionalAmount(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return normalizeAmount(trimmed);
 }
 
 // The API stores tax as a fraction (0.16); staff enter a percentage (16).

@@ -69,6 +69,7 @@ export class PosMenuService {
               outletName: entry.outlet.name,
               outletType: entry.outlet.outletType,
               price: entry.price.toFixed(2),
+              priceUsd: entry.priceUsd ? entry.priceUsd.toFixed(2) : null,
               taxRate: entry.taxRate.toFixed(4),
               available: entry.available
             }))
@@ -108,6 +109,7 @@ export class PosMenuService {
     const propertyId = requireProperty(user);
     const sku = dto.sku.trim().toUpperCase();
     const price = new Prisma.Decimal(dto.price);
+    const priceUsd = dto.priceUsd ? new Prisma.Decimal(dto.priceUsd) : null;
     const taxRate = new Prisma.Decimal(dto.taxRate ?? "0");
 
     const category = await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, propertyId } });
@@ -133,7 +135,7 @@ export class PosMenuService {
               sku,
               basePrice: price,
               outletProducts: {
-                create: outlets.map((outlet) => ({ outletId: outlet.id, price, taxRate, available: true }))
+                create: outlets.map((outlet) => ({ outletId: outlet.id, price, priceUsd, taxRate, available: true }))
               }
             }
           }
@@ -145,6 +147,7 @@ export class PosMenuService {
         sku: product.sku,
         categoryId: category.id,
         price: price.toFixed(2),
+        priceUsd: priceUsd?.toFixed(2) ?? null,
         taxRate: taxRate.toFixed(4),
         outlets: outlets.map((outlet) => outlet.name)
       });
@@ -181,6 +184,8 @@ export class PosMenuService {
     const targetOutlets = dto.outletIds ? await this.resolveOutlets(user, propertyId, dto.outletIds) : null;
 
     const price = dto.price !== undefined ? new Prisma.Decimal(dto.price) : undefined;
+    // undefined leaves the USD price alone; "" clears it.
+    const priceUsd = dto.priceUsd === undefined ? undefined : dto.priceUsd ? new Prisma.Decimal(dto.priceUsd) : null;
     const taxRate = dto.taxRate !== undefined ? new Prisma.Decimal(dto.taxRate) : undefined;
     const currentScoped = variant.outletProducts.filter((entry) => accessibleIds.has(entry.outletId));
     const fallbackTaxRate = currentScoped[0]?.taxRate ?? variant.outletProducts[0]?.taxRate ?? new Prisma.Decimal(0);
@@ -193,6 +198,7 @@ export class PosMenuService {
       outlets: currentScoped.map((entry) => ({
         outlet: entry.outlet.name,
         price: entry.price.toFixed(2),
+        priceUsd: entry.priceUsd?.toFixed(2) ?? null,
         taxRate: entry.taxRate.toFixed(4),
         available: entry.available
       }))
@@ -228,6 +234,7 @@ export class PosMenuService {
               outletId: outlet.id,
               productVariantId: variant.id,
               price: price ?? variant.basePrice,
+              priceUsd: priceUsd !== undefined ? priceUsd : (currentScoped[0]?.priceUsd ?? variant.outletProducts[0]?.priceUsd ?? null),
               taxRate: taxRate ?? fallbackTaxRate,
               available: dto.available ?? true
             }))
@@ -237,10 +244,10 @@ export class PosMenuService {
 
       // Price, tax and availability changes apply to every outlet this user manages.
       const scopedIds = targetOutlets ? targetOutlets.map((outlet) => outlet.id) : currentScoped.map((entry) => entry.outletId);
-      if (scopedIds.length > 0 && (price || taxRate || dto.available !== undefined)) {
+      if (scopedIds.length > 0 && (price || priceUsd !== undefined || taxRate || dto.available !== undefined)) {
         await tx.outletProduct.updateMany({
           where: { productVariantId: variant.id, outletId: { in: scopedIds } },
-          data: { price, taxRate, available: dto.available }
+          data: { price, priceUsd, taxRate, available: dto.available }
         });
       }
 
@@ -257,6 +264,7 @@ export class PosMenuService {
         categoryId: dto.categoryId,
         active: dto.active,
         price: price?.toFixed(2),
+        priceUsd: priceUsd === undefined ? undefined : (priceUsd?.toFixed(2) ?? null),
         taxRate: taxRate?.toFixed(4),
         available: dto.available,
         outlets: targetOutlets?.map((outlet) => outlet.name)

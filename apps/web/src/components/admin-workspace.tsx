@@ -22,6 +22,7 @@ import { StaffAccountsPanel } from "@/components/staff-accounts-panel";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
 import { readSession } from "@/lib/auth";
+import { formatCurrency } from "@/lib/currency";
 
 type UserStatus = "ACTIVE" | "SUSPENDED";
 
@@ -125,6 +126,7 @@ type ApiRoomType = {
   baseOccupancy: number;
   maxOccupancy: number;
   baseRate: string;
+  baseRateUsd: string | null;
   active: boolean;
 };
 
@@ -143,14 +145,15 @@ type RoomTypePreset = {
   baseOccupancy: string;
   maxOccupancy: string;
   baseRate: string;
+  baseRateUsd: string;
 };
 
 const permissionModules = Array.from(new Set(roleAccessLevels.flatMap((accessLevel) => accessLevel.modules)));
 
 const roomTypePresets: RoomTypePreset[] = [
-  { code: "STD", name: "Standard Room", baseOccupancy: "1", maxOccupancy: "2", baseRate: "80.00" },
-  { code: "DLX", name: "Deluxe Room", baseOccupancy: "2", maxOccupancy: "3", baseRate: "120.00" },
-  { code: "STE", name: "Suite", baseOccupancy: "2", maxOccupancy: "4", baseRate: "180.00" }
+  { code: "STD", name: "Standard Room", baseOccupancy: "1", maxOccupancy: "2", baseRate: "", baseRateUsd: "" },
+  { code: "DLX", name: "Deluxe Room", baseOccupancy: "2", maxOccupancy: "3", baseRate: "", baseRateUsd: "" },
+  { code: "STE", name: "Suite", baseOccupancy: "2", maxOccupancy: "4", baseRate: "", baseRateUsd: "" }
 ];
 
 const numberingRuleLabels: Record<string, string> = {
@@ -178,8 +181,10 @@ export function AdminWorkspace() {
     name: "",
     baseOccupancy: "1",
     maxOccupancy: "2",
-    baseRate: ""
+    baseRate: "",
+    baseRateUsd: ""
   });
+  const [rateEdit, setRateEdit] = useState<{ roomTypeId: string; baseRate: string; baseRateUsd: string } | null>(null);
   const [roomForm, setRoomForm] = useState({
     roomTypeId: "",
     roomNumber: ""
@@ -278,11 +283,17 @@ export function AdminWorkspace() {
     const code = roomTypeForm.code.trim().toUpperCase();
     const name = roomTypeForm.name.trim();
     const baseRate = Number(roomTypeForm.baseRate);
+    const baseRateUsd = roomTypeForm.baseRateUsd.trim();
     const baseOccupancy = Number(roomTypeForm.baseOccupancy);
     const maxOccupancy = Number(roomTypeForm.maxOccupancy);
 
-    if (!code || !name || !Number.isFinite(baseRate) || baseRate < 0) {
-      setMessage("Enter a room type code, name, and valid base rate.");
+    if (!code || !name || !roomTypeForm.baseRate.trim() || !Number.isFinite(baseRate) || baseRate < 0) {
+      setMessage("Enter a room type code, name, and valid TSh rate.");
+      return;
+    }
+
+    if (baseRateUsd && !isValidRate(baseRateUsd)) {
+      setMessage("Enter a valid USD rate, or leave it empty.");
       return;
     }
 
@@ -304,7 +315,8 @@ export function AdminWorkspace() {
         name,
         baseOccupancy,
         maxOccupancy,
-        baseRate: roomTypeForm.baseRate,
+        baseRate: roomTypeForm.baseRate.trim(),
+        baseRateUsd: baseRateUsd || undefined,
         active: true
       })
     });
@@ -317,9 +329,37 @@ export function AdminWorkspace() {
 
     setRoomTypes((current) => [result.data, ...current]);
     setRoomForm((current) => ({ ...current, roomTypeId: result.data.id }));
-    setRoomTypeForm({ code: "", name: "", baseOccupancy: "1", maxOccupancy: "2", baseRate: "" });
+    setRoomTypeForm({ code: "", name: "", baseOccupancy: "1", maxOccupancy: "2", baseRate: "", baseRateUsd: "" });
     void reloadAudit();
     setMessage(`Room type ${result.data.code} created.`);
+  }
+
+  async function saveRoomTypeRates() {
+    if (!rateEdit) return;
+    const baseRate = rateEdit.baseRate.trim();
+    const baseRateUsd = rateEdit.baseRateUsd.trim();
+
+    if (!isValidRate(baseRate) || (baseRateUsd && !isValidRate(baseRateUsd))) {
+      setMessage("Enter a valid TSh rate and an optional valid USD rate.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<ApiRoomType>(`/front-office/room-types/${rateEdit.roomTypeId}/rates`, {
+      method: "PATCH",
+      body: JSON.stringify({ baseRate, baseRateUsd })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setRoomTypes((current) => current.map((roomType) => (roomType.id === result.data.id ? result.data : roomType)));
+    setRateEdit(null);
+    void reloadAudit();
+    setMessage(`Rates for ${result.data.code} updated.`);
   }
 
   async function createRoom(event: FormEvent<HTMLFormElement>) {
@@ -389,7 +429,7 @@ export function AdminWorkspace() {
 
   function applyRoomTypePreset(preset: RoomTypePreset) {
     setRoomTypeForm({ ...preset });
-    setMessage(`${preset.name} preset loaded. Adjust the rate if needed, then save the room type.`);
+    setMessage(`${preset.name} preset loaded. Enter the TSh and USD rates, then save the room type.`);
   }
 
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
@@ -519,22 +559,75 @@ export function AdminWorkspace() {
                   onChange={(event) => setRoomTypeForm({ ...roomTypeForm, maxOccupancy: event.target.value })}
                   placeholder="Max occupancy"
                 />
-                <Input
-                  aria-label="Base rate"
-                  className="sm:col-span-2"
-                  value={roomTypeForm.baseRate}
-                  onChange={(event) => setRoomTypeForm({ ...roomTypeForm, baseRate: event.target.value })}
-                  placeholder="Base rate"
-                />
+                <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
+                  Rate per night (TSh)
+                  <Input
+                    aria-label="Rate per night in TSh"
+                    inputMode="decimal"
+                    value={roomTypeForm.baseRate}
+                    onChange={(event) => setRoomTypeForm({ ...roomTypeForm, baseRate: event.target.value })}
+                    placeholder="e.g. 150000"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
+                  Rate per night (USD)
+                  <Input
+                    aria-label="Rate per night in USD"
+                    inputMode="decimal"
+                    value={roomTypeForm.baseRateUsd}
+                    onChange={(event) => setRoomTypeForm({ ...roomTypeForm, baseRateUsd: event.target.value })}
+                    placeholder="e.g. 60.00"
+                  />
+                </label>
               </div>
               {roomTypes.length > 0 ? (
                 <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                  {roomTypes.map((roomType) => (
-                    <p key={roomType.id}>
-                      <span className="font-semibold text-foreground">{roomType.code}</span> {roomType.name} · {formatMoney(roomType.baseRate)} · sleeps{" "}
-                      {roomType.maxOccupancy}
-                    </p>
-                  ))}
+                  {roomTypes.map((roomType) =>
+                    rateEdit?.roomTypeId === roomType.id ? (
+                      <div key={roomType.id} className="flex flex-wrap items-center gap-2 rounded border border-border bg-white p-2">
+                        <span className="font-semibold text-foreground">{roomType.code}</span>
+                        <Input
+                          aria-label={`${roomType.code} rate in TSh`}
+                          className="h-8 w-32"
+                          inputMode="decimal"
+                          value={rateEdit.baseRate}
+                          onChange={(event) => setRateEdit({ ...rateEdit, baseRate: event.target.value })}
+                          placeholder="TSh"
+                        />
+                        <Input
+                          aria-label={`${roomType.code} rate in USD`}
+                          className="h-8 w-28"
+                          inputMode="decimal"
+                          value={rateEdit.baseRateUsd}
+                          onChange={(event) => setRateEdit({ ...rateEdit, baseRateUsd: event.target.value })}
+                          placeholder="USD"
+                        />
+                        <Button type="button" className="h-8 px-3" disabled={busy} onClick={() => void saveRoomTypeRates()}>
+                          Save
+                        </Button>
+                        <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => setRateEdit(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <p key={roomType.id} className="flex flex-wrap items-center gap-x-1">
+                        <span className="font-semibold text-foreground">{roomType.code}</span> {roomType.name} ·{" "}
+                        {formatCurrency(roomType.baseRate, "TZS")} ·{" "}
+                        {roomType.baseRateUsd ? formatCurrency(roomType.baseRateUsd, "USD") : "no USD rate"} · sleeps {roomType.maxOccupancy}
+                        {can("front_office.rooms.manage") ? (
+                          <button
+                            type="button"
+                            className="ml-1 font-semibold text-primary underline-offset-2 hover:underline"
+                            onClick={() =>
+                              setRateEdit({ roomTypeId: roomType.id, baseRate: roomType.baseRate, baseRateUsd: roomType.baseRateUsd ?? "" })
+                            }
+                          >
+                            Edit rates
+                          </button>
+                        ) : null}
+                      </p>
+                    )
+                  )}
                 </div>
               ) : (
                 <p className="mt-3 text-xs text-muted-foreground">No room types yet. Create one before adding rooms.</p>
@@ -918,13 +1011,8 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
-function formatMoney(value: string | number) {
-  const amount = typeof value === "number" ? value : Number(value);
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2
-  }).format(Number.isFinite(amount) ? amount : 0);
+function isValidRate(value: string) {
+  return /^\d{1,12}(\.\d{1,4})?$/.test(value);
 }
 
 function parseRoomNumbers(value: string) {

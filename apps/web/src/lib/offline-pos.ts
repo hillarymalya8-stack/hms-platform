@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api-client";
+import type { SaleCurrency } from "@/lib/currency";
 
 export type OfflineSaleStatus = "QUEUED" | "SYNCING" | "SYNCED" | "CONFLICT";
 export type OfflinePaymentMethod = "CASH" | "CARD" | "MOBILE_MONEY" | "BANK_TRANSFER" | "ROOM_CHARGE";
@@ -23,6 +24,8 @@ export type OfflineSale = {
   folioId?: string;
   roomLabel?: string;
   localOrderNumber: string;
+  // Older queued sales predate dual-currency selling and were always TSh.
+  currencyCode?: SaleCurrency;
   subtotal: number;
   tax: number;
   total: number;
@@ -59,6 +62,7 @@ export type CachedPosCatalog = {
     name: string;
     category: string;
     price: number;
+    priceUsd?: number | null;
     taxRate: number;
   }>;
   cachedAt: string;
@@ -172,6 +176,7 @@ async function syncOfflineSale(sale: OfflineSale): Promise<{ ok: true; sale: Par
       terminalId: sale.terminalId,
       folioId: sale.folioId,
       serviceType: serviceTypeForOutletType(sale.outletType),
+      currencyCode: sale.currencyCode ?? "TZS",
       idempotencyKey: sale.orderIdempotencyKey,
       items: sale.lines.map((line) => ({
         productVariantId: line.productVariantId,

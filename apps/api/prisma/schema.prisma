@@ -456,6 +456,8 @@ model RoomType {
   baseOccupancy Int      @default(1) @map("base_occupancy")
   maxOccupancy  Int      @default(2) @map("max_occupancy")
   baseRate      Decimal  @default(0) @map("base_rate") @db.Decimal(18, 4)
+  // baseRate is the TSh rate; baseRateUsd is the optional USD rate for guests paying in dollars.
+  baseRateUsd   Decimal? @map("base_rate_usd") @db.Decimal(18, 4)
   active        Boolean  @default(true)
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -572,6 +574,7 @@ model ReservationRoom {
   roomId        String?           @map("room_id") @db.Uuid
   ratePlanCode  String?           @map("rate_plan_code")
   nightlyRate   Decimal           @default(0) @map("nightly_rate") @db.Decimal(18, 4)
+  currencyCode  String            @default("TZS") @map("currency_code")
   status        ReservationStatus @default(CONFIRMED)
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
@@ -804,11 +807,13 @@ model ProductVariant {
 }
 
 model OutletProduct {
-  outletId         String  @map("outlet_id") @db.Uuid
-  productVariantId String  @map("product_variant_id") @db.Uuid
-  price            Decimal @db.Decimal(18, 4)
-  taxRate          Decimal @default(0) @map("tax_rate") @db.Decimal(8, 4)
-  available        Boolean @default(true)
+  outletId         String   @map("outlet_id") @db.Uuid
+  productVariantId String   @map("product_variant_id") @db.Uuid
+  // price is the TSh price; priceUsd is the optional USD price used when the cashier sells in dollars.
+  price            Decimal  @db.Decimal(18, 4)
+  priceUsd         Decimal? @map("price_usd") @db.Decimal(18, 4)
+  taxRate          Decimal  @default(0) @map("tax_rate") @db.Decimal(8, 4)
+  available        Boolean  @default(true)
 
   outlet         PosOutlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
   productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
@@ -847,6 +852,7 @@ model PosOrder {
   orderNumber        String         @map("order_number")
   status             PosOrderStatus @default(OPEN)
   serviceType        PosServiceType @default(DINE_IN) @map("service_type")
+  currencyCode       String         @default("TZS") @map("currency_code")
   subtotal           Decimal        @default(0) @db.Decimal(18, 4)
   discountTotal      Decimal        @default(0) @map("discount_total") @db.Decimal(18, 4)
   taxTotal           Decimal        @default(0) @map("tax_total") @db.Decimal(18, 4)

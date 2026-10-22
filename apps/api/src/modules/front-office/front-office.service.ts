@@ -19,6 +19,7 @@ import { CreateRoomTypeDto } from "./dto/create-room-type.dto";
 import { PostRoomChargeDto } from "./dto/post-room-charge.dto";
 import { SettleFolioPaymentDto } from "./dto/settle-folio-payment.dto";
 import { UpdateRoomChartDto } from "./dto/update-room-chart.dto";
+import { UpdateRoomTypeRatesDto } from "./dto/update-room-type-rates.dto";
 import { assertValidStayDates, blockingReservationStatuses } from "./reservation-availability";
 
 @Injectable()
@@ -38,6 +39,7 @@ export class FrontOfficeService {
     const code = dto.code.trim().toUpperCase();
     const name = dto.name.trim();
     const baseRate = new Prisma.Decimal(dto.baseRate);
+    const baseRateUsd = dto.baseRateUsd ? new Prisma.Decimal(dto.baseRateUsd) : null;
     const baseOccupancy = dto.baseOccupancy ?? 1;
     const maxOccupancy = dto.maxOccupancy ?? 2;
 
@@ -45,7 +47,7 @@ export class FrontOfficeService {
       throw new BadRequestException("Room type code and name are required.");
     }
 
-    if (baseRate.lt(0)) {
+    if (baseRate.lt(0) || baseRateUsd?.lt(0)) {
       throw new BadRequestException("Base rate cannot be negative.");
     }
 
@@ -72,6 +74,7 @@ export class FrontOfficeService {
         baseOccupancy,
         maxOccupancy,
         baseRate,
+        baseRateUsd,
         active: dto.active ?? true
       }
     });
@@ -79,10 +82,42 @@ export class FrontOfficeService {
     await this.recordAudit(user, "create_room_type", "room_type", roomType.id, {
       code: roomType.code,
       name: roomType.name,
-      baseRate: roomType.baseRate.toString()
+      baseRate: roomType.baseRate.toString(),
+      baseRateUsd: roomType.baseRateUsd?.toString() ?? null
     });
 
     return roomType;
+  }
+
+  async updateRoomTypeRates(user: UserContext, roomTypeId: string, dto: UpdateRoomTypeRatesDto) {
+    const propertyId = this.requireProperty(user);
+    const roomType = await this.prisma.roomType.findFirst({ where: { id: roomTypeId, propertyId } });
+
+    if (!roomType) {
+      throw new NotFoundException("Room type was not found.");
+    }
+
+    const baseRate = dto.baseRate !== undefined ? new Prisma.Decimal(dto.baseRate) : undefined;
+    const baseRateUsd = dto.baseRateUsd === undefined ? undefined : dto.baseRateUsd ? new Prisma.Decimal(dto.baseRateUsd) : null;
+
+    if (baseRate?.lt(0) || baseRateUsd?.lt(0)) {
+      throw new BadRequestException("Base rate cannot be negative.");
+    }
+
+    const updated = await this.prisma.roomType.update({
+      where: { id: roomType.id },
+      data: { baseRate, baseRateUsd }
+    });
+
+    await this.recordAudit(user, "update_room_type_rates", "room_type", updated.id, {
+      code: updated.code,
+      previousBaseRate: roomType.baseRate.toString(),
+      previousBaseRateUsd: roomType.baseRateUsd?.toString() ?? null,
+      baseRate: updated.baseRate.toString(),
+      baseRateUsd: updated.baseRateUsd?.toString() ?? null
+    });
+
+    return updated;
   }
 
   listRooms(user: UserContext) {
@@ -171,7 +206,8 @@ export class FrontOfficeService {
           id: room.roomType.id,
           code: room.roomType.code,
           name: room.roomType.name,
-          baseRate: money(room.roomType.baseRate)
+          baseRate: money(room.roomType.baseRate),
+          baseRateUsd: room.roomType.baseRateUsd ? money(room.roomType.baseRateUsd) : null
         },
         currentStay: reservation
           ? {
@@ -188,6 +224,7 @@ export class FrontOfficeService {
                 phone: reservation.primaryGuest.phone
               },
               nightlyRate: assignedRoom ? money(assignedRoom.nightlyRate) : "0.00",
+              currencyCode: assignedRoom?.currencyCode ?? "TZS",
               folio: folio
                 ? {
                     id: folio.id,
@@ -761,6 +798,7 @@ export class FrontOfficeService {
               roomTypeId: dto.roomTypeId,
               roomId: dto.roomId,
               nightlyRate: new Prisma.Decimal(dto.nightlyRate),
+              currencyCode: dto.currencyCode ?? "TZS",
               status: ReservationStatus.CONFIRMED
             }
           },

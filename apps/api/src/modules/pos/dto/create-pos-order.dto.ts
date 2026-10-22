@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { ArrayMinSize, IsArray, IsOptional, IsString, IsUUID, ValidateNested } from "class-validator";
+import { ArrayMinSize, IsArray, IsIn, IsOptional, IsString, IsUUID, ValidateNested } from "class-validator";
 
 class CreatePosOrderItemDto {
   @IsUUID()
@@ -32,6 +32,11 @@ export class CreatePosOrderDto {
   @IsOptional()
   @IsString()
   serviceType?: "DINE_IN" | "TAKEAWAY" | "ROOM_SERVICE" | "BAR";
+
+  // Sale currency; prices come from the outlet's TSh or USD price list. Defaults to TZS.
+  @IsOptional()
+  @IsIn(["TZS", "USD"])
+  currencyCode?: "TZS" | "USD";
 
   @IsOptional()
   @IsString()
