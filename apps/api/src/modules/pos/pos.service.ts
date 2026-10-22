@@ -232,7 +232,8 @@ export class PosService {
           folio: {
             id: folio.id,
             folioNumber: folio.folioNumber,
-            balance: money(folio.balance)
+            balance: money(folio.balance),
+            currencyCode: assignedRoom.currencyCode
           }
         };
       })
@@ -270,6 +271,8 @@ export class PosService {
 
   async createOrder(user: UserContext, dto: CreatePosOrderDto) {
     const propertyId = this.requireProperty(user);
+
+    const currencyCode = dto.currencyCode ?? "TZS";
 
     return this.prisma.$transaction(async (tx) => {
       const outlet = await tx.posOutlet.findFirst({
@@ -347,6 +350,14 @@ export class PosService {
         if (!folio) {
           throw new BadRequestException("Choose an occupied room with an open folio before charging to room.");
         }
+
+        const stay = await tx.reservationRoom.findFirst({
+          where: { reservationId: folio.reservationId, status: ReservationStatus.CHECKED_IN }
+        });
+        if (stay && stay.currencyCode !== currencyCode) {
+          const label = currencyLabel(stay.currencyCode);
+          throw new BadRequestException(`This room's folio is in ${label}. Sell in ${label} to charge it to the room.`);
+        }
       }
 
       const variants = dto.items.map((item) => item.productVariantId);
@@ -372,6 +383,14 @@ export class PosService {
         throw new BadRequestException("One or more products are not available in this outlet.");
       }
 
+      const unitPriceFor = (catalogItem: (typeof outletProducts)[number]) => {
+        if (currencyCode === "TZS") return catalogItem.price;
+        if (!catalogItem.priceUsd) {
+          throw new BadRequestException(`${catalogItem.productVariant.product.name} has no USD price. Add one in Menu management or sell in TSh.`);
+        }
+        return catalogItem.priceUsd;
+      };
+
       const totals = calculatePosOrderTotals(
         dto.items.map((item) => {
           const catalogItem = catalogByVariant.get(item.productVariantId);
@@ -381,7 +400,7 @@ export class PosService {
 
           return {
             quantity: item.quantity,
-            unitPrice: catalogItem.price.toString(),
+            unitPrice: unitPriceFor(catalogItem).toString(),
             taxRate: catalogItem.taxRate.toString()
           };
         })
@@ -398,6 +417,7 @@ export class PosService {
           folioId: dto.folioId,
           orderNumber,
           serviceType: dto.serviceType ? PosServiceType[dto.serviceType] : PosServiceType.DINE_IN,
+          currencyCode,
           subtotal: totals.subtotal,
           discountTotal: totals.discountTotal,
           taxTotal: totals.taxTotal,
@@ -414,7 +434,7 @@ export class PosService {
               return {
                 productVariantId: item.productVariantId,
                 quantity: itemTotal.quantity,
-                unitPrice: catalogItem.price,
+                unitPrice: unitPriceFor(catalogItem),
                 discountAmount: itemTotal.discountAmount,
                 taxAmount: itemTotal.taxAmount,
                 totalAmount: itemTotal.totalAmount
@@ -460,7 +480,8 @@ export class PosService {
           newValue: {
             orderNumber: order.orderNumber,
             outletId: order.outletId,
-            grandTotal: order.grandTotal.toString()
+            grandTotal: order.grandTotal.toString(),
+            currencyCode: order.currencyCode
           }
         }
       });
@@ -574,7 +595,7 @@ export class PosService {
           sourceId: order.id,
           paymentMethod: dto.paymentMethod,
           amount,
-          currencyCode: "USD",
+          currencyCode: order.currencyCode,
           systemReceiptNumber,
           externalReceiptNumber: dto.externalReceiptNumber,
           authorizationCode: dto.authorizationCode,
@@ -811,4 +832,8 @@ function prepStationFor(category: string, outletType: string) {
   }
 
   return "Restaurant Kitchen";
+}
+
+function currencyLabel(code: string) {
+  return code === "USD" ? "USD" : "TSh";
 }

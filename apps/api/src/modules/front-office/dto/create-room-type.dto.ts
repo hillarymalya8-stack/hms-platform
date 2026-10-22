@@ -21,8 +21,14 @@ export class CreateRoomTypeDto {
   @Min(1)
   maxOccupancy?: number;
 
+  // TSh rate per night.
   @IsNumberString()
   baseRate!: string;
+
+  // Optional USD rate per night.
+  @IsOptional()
+  @IsNumberString()
+  baseRateUsd?: string;
 
   @IsOptional()
   @IsBoolean()

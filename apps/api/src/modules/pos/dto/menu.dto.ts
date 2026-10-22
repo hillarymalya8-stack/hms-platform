@@ -15,6 +15,7 @@ import {
 } from "class-validator";
 
 const DECIMAL = /^\d{1,12}(\.\d{1,4})?$/;
+const OPTIONAL_DECIMAL = /^(\d{1,12}(\.\d{1,4})?)?$/;
 // Tax rates are stored as fractions (0.16 = 16%), matching OutletProduct.taxRate.
 const TAX_RATE = /^(0(\.\d{1,4})?|1(\.0{1,4})?)$/;
 
@@ -48,6 +49,12 @@ export class CreatePosProductDto {
   @Matches(DECIMAL, { message: "Price must be a positive amount with up to 4 decimals." })
   price!: string;
 
+  // Optional USD price; leave empty when the item is only sold in TSh.
+  @IsOptional()
+  @IsString()
+  @Matches(DECIMAL, { message: "USD price must be a positive amount with up to 4 decimals." })
+  priceUsd?: string;
+
   @IsOptional()
   @IsString()
   @Matches(TAX_RATE, { message: "Tax rate must be a fraction between 0 and 1 (0.16 = 16%)." })
@@ -78,6 +85,12 @@ export class UpdatePosProductDto {
   @IsString()
   @Matches(DECIMAL, { message: "Price must be a positive amount with up to 4 decimals." })
   price?: string;
+
+  // Empty string clears the USD price so the item can no longer be sold in USD.
+  @IsOptional()
+  @IsString()
+  @Matches(OPTIONAL_DECIMAL, { message: "USD price must be a positive amount with up to 4 decimals." })
+  priceUsd?: string;
 
   @IsOptional()
   @IsString()

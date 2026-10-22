@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { BedDouble, CalendarPlus, DoorOpen, Hotel, Pencil, ReceiptText, RefreshCcw, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
+import { currencyLabel, formatCurrency, saleCurrencies, type SaleCurrency } from "@/lib/currency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InvoiceWorkspace } from "@/components/invoice-workspace";
@@ -21,7 +22,9 @@ type RoomType = {
   id: string;
   code: string;
   name: string;
+  // TSh rate; baseRateUsd is null when the room type has no USD rate.
   baseRate: string;
+  baseRateUsd?: string | null;
 };
 
 type Room = {
@@ -47,6 +50,7 @@ type RoomChartRoom = Room & {
     departureDate: string;
     guest: Guest;
     nightlyRate: string;
+    currencyCode?: SaleCurrency;
     folio?: {
       id: string;
       folioNumber: string;
@@ -153,6 +157,7 @@ export function FrontOfficeWorkspace() {
     arrivalDate: dateInputValue(0),
     departureDate: dateInputValue(1),
     nightlyRate: "",
+    currencyCode: "TZS" as SaleCurrency,
     adults: "1",
     children: "0"
   });
@@ -211,7 +216,11 @@ export function FrontOfficeWorkspace() {
     }
 
     if (!reservationForm.roomTypeId && roomTypes[0]) {
-      setReservationForm((current) => ({ ...current, roomTypeId: roomTypes[0].id, nightlyRate: roomTypes[0].baseRate }));
+      setReservationForm((current) => ({
+        ...current,
+        roomTypeId: roomTypes[0].id,
+        nightlyRate: rateFor(roomTypes[0], current.currencyCode)
+      }));
     }
 
     if (!reservationForm.roomId && rooms[0]) {
@@ -318,6 +327,11 @@ export function FrontOfficeWorkspace() {
   async function createReservation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (!reservationForm.nightlyRate.trim()) {
+      setMessage(`Enter a ${currencyLabel(reservationForm.currencyCode)} nightly rate, or set one for this room type in Admin.`);
+      return;
+    }
+
     setBusy(true);
     const result = await apiRequest<Reservation>("/front-office/reservations", {
       method: "POST",
@@ -328,6 +342,7 @@ export function FrontOfficeWorkspace() {
         arrivalDate: reservationForm.arrivalDate,
         departureDate: reservationForm.departureDate,
         nightlyRate: reservationForm.nightlyRate,
+        currencyCode: reservationForm.currencyCode,
         adults: Number(reservationForm.adults),
         children: Number(reservationForm.children)
       })
@@ -503,8 +518,17 @@ export function FrontOfficeWorkspace() {
       ...current,
       roomId: room.id,
       roomTypeId: room.roomType.id,
-      nightlyRate: room.roomType.baseRate
+      nightlyRate: rateFor(room.roomType, current.currencyCode)
     }));
+  }
+
+  function changeReservationCurrency(currencyCode: SaleCurrency) {
+    const roomType = roomTypes.find((item) => item.id === reservationForm.roomTypeId);
+    const nightlyRate = roomType ? rateFor(roomType, currencyCode) : "";
+    setReservationForm({ ...reservationForm, currencyCode, nightlyRate });
+    if (roomType && !nightlyRate) {
+      setMessage(`${roomType.name} has no ${currencyLabel(currencyCode)} rate yet. Enter one manually or set it in Admin.`);
+    }
   }
 
   return (
@@ -654,7 +678,7 @@ export function FrontOfficeWorkspace() {
                   setReservationForm({
                     ...reservationForm,
                     roomTypeId: event.target.value,
-                    nightlyRate: roomType?.baseRate ?? reservationForm.nightlyRate
+                    nightlyRate: roomType ? rateFor(roomType, reservationForm.currencyCode) : reservationForm.nightlyRate
                   });
                 }}
               >
@@ -684,12 +708,27 @@ export function FrontOfficeWorkspace() {
                     </option>
                   ))}
               </select>
-              <Input
-                aria-label="Nightly rate"
-                value={reservationForm.nightlyRate}
-                onChange={(event) => setReservationForm({ ...reservationForm, nightlyRate: event.target.value })}
-                placeholder="Nightly rate"
-              />
+              <div className="flex gap-2">
+                <select
+                  aria-label="Stay currency"
+                  className="h-10 rounded border border-border bg-white px-3 text-sm font-semibold"
+                  value={reservationForm.currencyCode}
+                  onChange={(event) => changeReservationCurrency(event.target.value as SaleCurrency)}
+                >
+                  {saleCurrencies.map((currency) => (
+                    <option key={currency.code} value={currency.code}>
+                      {currency.label}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  aria-label="Nightly rate"
+                  inputMode="decimal"
+                  value={reservationForm.nightlyRate}
+                  onChange={(event) => setReservationForm({ ...reservationForm, nightlyRate: event.target.value })}
+                  placeholder={`Nightly rate (${currencyLabel(reservationForm.currencyCode)})`}
+                />
+              </div>
               <Input
                 aria-label="Arrival date"
                 type="date"
@@ -727,7 +766,15 @@ export function FrontOfficeWorkspace() {
                   <div className="grid gap-3 sm:grid-cols-3">
                     <RoomFact label="Type" value={selectedChartRoom.roomType.name} />
                     <RoomFact label="Status" value={roomStatusLabel(selectedChartRoom)} />
-                    <RoomFact label="Rate" value={formatMoney(selectedChartRoom.roomType.baseRate)} />
+                    <RoomFact
+                      label="Rate"
+                      value={[
+                        formatCurrency(selectedChartRoom.roomType.baseRate, "TZS"),
+                        selectedChartRoom.roomType.baseRateUsd ? formatCurrency(selectedChartRoom.roomType.baseRateUsd, "USD") : null
+                      ]
+                        .filter(Boolean)
+                        .join(" / ")}
+                    />
                   </div>
                   <form onSubmit={saveRoomChartEdit} className="rounded border border-border bg-background p-3">
                     <div className="mb-3 flex items-center gap-2">
@@ -798,7 +845,9 @@ export function FrontOfficeWorkspace() {
                             />
                           </label>
                           <label className="block space-y-1.5 sm:col-span-2">
-                            <span className="text-sm font-medium">Nightly rate</span>
+                            <span className="text-sm font-medium">
+                              Nightly rate ({currencyLabel(selectedChartRoom.currentStay?.currencyCode ?? "TZS")})
+                            </span>
                             <Input
                               aria-label="Edit nightly rate"
                               value={roomEditForm.nightlyRate}
@@ -1065,4 +1114,8 @@ function formatMoney(value: string | number) {
     currency: "USD",
     minimumFractionDigits: 2
   }).format(Number.isFinite(amount) ? amount : 0);
+}
+
+function rateFor(roomType: RoomType, currency: SaleCurrency) {
+  return currency === "USD" ? (roomType.baseRateUsd ?? "") : roomType.baseRate;
 }

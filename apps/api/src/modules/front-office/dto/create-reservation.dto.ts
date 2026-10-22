@@ -1,4 +1,4 @@
-import { IsInt, IsISO8601, IsNumberString, IsOptional, IsString, IsUUID, Min } from "class-validator";
+import { IsIn, IsInt, IsISO8601, IsNumberString, IsOptional, IsString, IsUUID, Min } from "class-validator";
 
 export class CreateReservationDto {
   @IsUUID()
@@ -29,6 +29,11 @@ export class CreateReservationDto {
 
   @IsNumberString()
   nightlyRate!: string;
+
+  // Currency the stay is sold in; the folio is kept in this currency. Defaults to TZS.
+  @IsOptional()
+  @IsIn(["TZS", "USD"])
+  currencyCode?: "TZS" | "USD";
 
   @IsOptional()
   @IsString()

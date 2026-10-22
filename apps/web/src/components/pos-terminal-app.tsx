@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
+import { currencyLabel, formatCurrency, saleCurrencies, type SaleCurrency } from "@/lib/currency";
 import { getApiBaseUrl, readSession, saveSession, type LoginResponse } from "@/lib/auth";
 import {
   enqueueOfflineSale,
@@ -56,7 +57,9 @@ type TerminalProduct = {
   productVariantId: string;
   name: string;
   category: string;
+  // TSh price; priceUsd is null when the item is not sold in USD.
   price: number;
+  priceUsd: number | null;
   taxRate: number;
 };
 
@@ -69,6 +72,7 @@ type PaidReceipt = {
   id: string;
   receiptNumber: string;
   paymentMethod: PaymentMethod;
+  currencyCode: SaleCurrency;
   total: number;
   offline?: boolean;
   syncStatus?: string;
@@ -109,6 +113,7 @@ type PosOutlet = {
 type CatalogItem = {
   productVariantId: string;
   price: string | number;
+  priceUsd: string | number | null;
   taxRate: string | number;
   productVariant: {
     id: string;
@@ -152,11 +157,13 @@ type ChargeableRoom = {
     id: string;
     folioNumber: string;
     balance: string;
+    currencyCode: SaleCurrency;
   };
 };
 
 const preferredOutletKey = "hms_pos_preferred_outlet";
 const preferredTerminalKey = "hms_pos_preferred_terminal";
+const preferredCurrencyKey = "hms_pos_sale_currency";
 
 const paymentMethods: Array<{ label: string; value: PaymentMethod; icon: LucideIcon }> = [
   { label: "Cash", value: "CASH", icon: Banknote },
@@ -183,6 +190,7 @@ export function PosTerminalApp() {
   const [terminalMode, setTerminalMode] = useState<TerminalMode>("offline");
   const [ticket, setTicket] = useState<TicketLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [saleCurrency, setSaleCurrency] = useState<SaleCurrency>("TZS");
   const [externalReference, setExternalReference] = useState("");
   const [receipts, setReceipts] = useState<PaidReceipt[]>([]);
   const [prepTickets, setPrepTickets] = useState<PrepTicket[]>([]);
@@ -213,13 +221,15 @@ export function PosTerminalApp() {
   const categories = useMemo(() => Array.from(new Set(products.map((product) => product.category))), [products]);
   const visibleProducts = products.filter((product) => product.category === activeCategory);
   const subtotal = useMemo(
-    () => ticket.reduce((sum, line) => sum + line.product.price * line.quantity, 0),
-    [ticket]
+    () => ticket.reduce((sum, line) => sum + (priceIn(line.product, saleCurrency) ?? 0) * line.quantity, 0),
+    [ticket, saleCurrency]
   );
   const tax = useMemo(
-    () => ticket.reduce((sum, line) => sum + line.product.price * line.quantity * line.product.taxRate, 0),
-    [ticket]
+    () =>
+      ticket.reduce((sum, line) => sum + (priceIn(line.product, saleCurrency) ?? 0) * line.quantity * line.product.taxRate, 0),
+    [ticket, saleCurrency]
   );
+  const money = (value: number) => formatCurrency(value, saleCurrency);
   const total = subtotal + tax;
   const referenceRequired = ["CARD", "MOBILE_MONEY", "BANK_TRANSFER"].includes(paymentMethod);
   const roomChargeSelected = paymentMethod === "ROOM_CHARGE";
@@ -250,6 +260,11 @@ export function PosTerminalApp() {
       setBarLowStock(result.data);
     }
   }
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(preferredCurrencyKey);
+    if (stored === "TZS" || stored === "USD") setSaleCurrency(stored);
+  }, []);
 
   useEffect(() => {
     setOfflineQueueCount(countPendingOfflineSales());
@@ -425,7 +440,7 @@ export function PosTerminalApp() {
     setOutlets(cached.outlets);
     setSelectedOutletId(cached.selectedOutletId);
     setSelectedTerminalId(cached.selectedTerminalId);
-    setProducts(cached.products);
+    setProducts(cached.products.map((product) => ({ ...product, priceUsd: product.priceUsd ?? null })));
     rememberPosAssignment(cached.selectedOutletId, cached.selectedTerminalId);
     setMessage(`${reason} Offline mode is using the cached menu from ${formatDateTime(cached.cachedAt)}.`);
     return true;
@@ -460,7 +475,28 @@ export function PosTerminalApp() {
     setSelectedFolioId("");
   }
 
+  function changeSaleCurrency(next: SaleCurrency) {
+    if (next === saleCurrency) return;
+
+    const unpriced = ticket.filter((line) => priceIn(line.product, next) === null);
+    if (unpriced.length > 0) {
+      setMessage(
+        `${unpriced.map((line) => line.product.name).join(", ")} ${unpriced.length === 1 ? "has" : "have"} no ${currencyLabel(next)} price. Remove ${unpriced.length === 1 ? "it" : "them"} or add the price in Menu management.`
+      );
+      return;
+    }
+
+    setSaleCurrency(next);
+    window.localStorage.setItem(preferredCurrencyKey, next);
+    setMessage(`Selling in ${currencyLabel(next)}. Prices switched to the ${currencyLabel(next)} price list.`);
+  }
+
   function addProduct(product: TerminalProduct) {
+    if (priceIn(product, saleCurrency) === null) {
+      setMessage(`${product.name} has no ${currencyLabel(saleCurrency)} price. Switch to TSh or add a USD price in Menu management.`);
+      return;
+    }
+
     setTicket((current) => {
       const existing = current.find((line) => line.product.id === product.id);
       if (existing) {
@@ -519,12 +555,19 @@ export function PosTerminalApp() {
       return;
     }
 
+    if (roomChargeSelected && selectedChargeableRoom && (selectedChargeableRoom.folio.currencyCode ?? "TZS") !== saleCurrency) {
+      const folioCurrency = currencyLabel(selectedChargeableRoom.folio.currencyCode ?? "TZS");
+      setMessage(`Room ${selectedChargeableRoom.roomNumber}'s folio is in ${folioCurrency}. Switch the sale to ${folioCurrency} to charge it to the room.`);
+      return;
+    }
+
     if (referenceRequired && !externalReference.trim()) {
       setMessage("Transaction reference required.");
       return;
     }
 
     const orderLines = ticket;
+    const orderCurrency = saleCurrency;
     const orderIdempotencyKey = createLocalId("terminal-order");
     const paymentIdempotencyKey = createLocalId("terminal-payment");
     const paymentReference =
@@ -547,6 +590,7 @@ export function PosTerminalApp() {
         terminalId: selectedTerminal?.id,
         folioId: roomChargeSelected ? selectedChargeableRoom?.folio.id : undefined,
         serviceType: serviceTypeForOutlet(selectedOutlet),
+        currencyCode: orderCurrency,
         idempotencyKey: orderIdempotencyKey,
         items: ticket.map((line) => ({
           productVariantId: line.product.productVariantId,
@@ -601,8 +645,9 @@ export function PosTerminalApp() {
         id: payment?.id ?? createLocalId("receipt"),
         receiptNumber,
         paymentMethod,
+        currencyCode: orderCurrency,
         total: receiptTotal,
-        lines: mapReceiptLines(orderLines),
+        lines: mapReceiptLines(orderLines, orderCurrency),
         createdAt: payment?.createdAt ?? new Date().toISOString()
       },
       ...current
@@ -632,6 +677,7 @@ export function PosTerminalApp() {
       folioId: roomChargeSelected ? selectedChargeableRoom?.folio.id : undefined,
       roomLabel: roomChargeSelected && selectedChargeableRoom ? roomChargeReference(selectedChargeableRoom) : undefined,
       localOrderNumber,
+      currencyCode: saleCurrency,
       subtotal,
       tax,
       total,
@@ -644,9 +690,9 @@ export function PosTerminalApp() {
         productVariantId: line.product.productVariantId,
         name: line.product.name,
         quantity: line.quantity,
-        unitPrice: line.product.price,
+        unitPrice: priceIn(line.product, saleCurrency) ?? 0,
         taxRate: line.product.taxRate,
-        amount: line.product.price * line.quantity
+        amount: (priceIn(line.product, saleCurrency) ?? 0) * line.quantity
       }))
     });
     const routedTickets = prepSent ? [] : queuePrepTickets(orderLines, offlineSale.localOrderNumber);
@@ -656,10 +702,11 @@ export function PosTerminalApp() {
         id: offlineSale.id,
         receiptNumber: `${offlineSale.localOrderNumber}-PENDING`,
         paymentMethod,
+        currencyCode: saleCurrency,
         total,
         offline: true,
         syncStatus: "PENDING SYNC",
-        lines: mapReceiptLines(orderLines),
+        lines: mapReceiptLines(orderLines, saleCurrency),
         createdAt: offlineSale.createdAt
       },
       ...current
@@ -712,13 +759,13 @@ export function PosTerminalApp() {
             (line) => `
               <div class="line">
                 <span>${line.quantity} x ${escapeHtml(line.name)}</span>
-                <strong>${formatMoney(line.amount)}</strong>
+                <strong>${escapeHtml(formatCurrency(line.amount, receipt.currencyCode))}</strong>
               </div>
             `
           )
           .join("")}
         <hr />
-        <div class="total"><span>Total</span><strong>${formatMoney(receipt.total)}</strong></div>
+        <div class="total"><span>Total (${currencyLabel(receipt.currencyCode)})</span><strong>${escapeHtml(formatCurrency(receipt.total, receipt.currencyCode))}</strong></div>
         <p class="muted">${escapeHtml(new Date(receipt.createdAt).toLocaleString())}</p>
       `
     );
@@ -944,18 +991,26 @@ export function PosTerminalApp() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {visibleProducts.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => addProduct(product)}
-                    className="flex min-h-[142px] flex-col justify-between rounded border border-border bg-white p-4 text-left transition-colors hover:border-[#163f35] hover:bg-[#f8fbf7]"
-                  >
-                    <span className="text-base font-bold">{product.name}</span>
-                    <span className="text-sm font-medium text-muted-foreground">{product.category}</span>
-                    <span className="text-xl font-bold tabular-nums">{formatMoney(product.price)}</span>
-                  </button>
-                ))}
+                {visibleProducts.map((product) => {
+                  const unitPrice = priceIn(product, saleCurrency);
+                  return (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => addProduct(product)}
+                      aria-disabled={unitPrice === null}
+                      className={`flex min-h-[142px] flex-col justify-between rounded border border-border bg-white p-4 text-left transition-colors ${
+                        unitPrice === null ? "cursor-not-allowed opacity-55" : "hover:border-[#163f35] hover:bg-[#f8fbf7]"
+                      }`}
+                    >
+                      <span className="text-base font-bold">{product.name}</span>
+                      <span className="text-sm font-medium text-muted-foreground">{product.category}</span>
+                      <span className="text-xl font-bold tabular-nums">
+                        {unitPrice === null ? `No ${currencyLabel(saleCurrency)} price` : money(unitPrice)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </section>
 
@@ -964,6 +1019,25 @@ export function PosTerminalApp() {
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-lg font-bold">Current Ticket</h2>
                   <Badge tone={ticket.length ? "primary" : "neutral"}>{ticket.length} lines</Badge>
+                </div>
+                <div className="mt-3 flex items-center gap-2" role="radiogroup" aria-label="Sale currency">
+                  <span className="text-sm font-medium text-muted-foreground">Sell in</span>
+                  {saleCurrencies.map((currency) => (
+                    <button
+                      key={currency.code}
+                      type="button"
+                      role="radio"
+                      aria-checked={saleCurrency === currency.code}
+                      onClick={() => changeSaleCurrency(currency.code)}
+                      className={`h-10 flex-1 rounded border text-sm font-bold transition-colors ${
+                        saleCurrency === currency.code
+                          ? "border-[#163f35] bg-[#163f35] text-white"
+                          : "border-border bg-white text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {currency.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -977,10 +1051,10 @@ export function PosTerminalApp() {
                         <div>
                           <p className="font-bold">{line.product.name}</p>
                           <p className="text-sm text-muted-foreground">
-                            {line.quantity} x {formatMoney(line.product.price)}
+                            {line.quantity} x {money(priceIn(line.product, saleCurrency) ?? 0)}
                           </p>
                         </div>
-                        <p className="font-bold tabular-nums">{formatMoney(line.product.price * line.quantity)}</p>
+                        <p className="font-bold tabular-nums">{money((priceIn(line.product, saleCurrency) ?? 0) * line.quantity)}</p>
                       </div>
                       <div className="mt-3 flex gap-2">
                         <Button type="button" variant="secondary" className="h-9 px-3" onClick={() => updateQuantity(line.product.id, "down")}>
@@ -999,15 +1073,15 @@ export function PosTerminalApp() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">Subtotal</span>
-                    <span className="font-semibold tabular-nums">{formatMoney(subtotal)}</span>
+                    <span className="font-semibold tabular-nums">{money(subtotal)}</span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">Tax</span>
-                    <span className="font-semibold tabular-nums">{formatMoney(tax)}</span>
+                    <span className="font-semibold tabular-nums">{money(tax)}</span>
                   </div>
                   <div className="flex justify-between gap-3 border-t border-border pt-3 text-xl">
                     <span className="font-bold">Total</span>
-                    <span className="font-bold tabular-nums">{formatMoney(total)}</span>
+                    <span className="font-bold tabular-nums">{money(total)}</span>
                   </div>
                 </div>
 
@@ -1056,7 +1130,7 @@ export function PosTerminalApp() {
                       {chargeableRooms.map((room) => (
                         <option key={room.folio.id} value={room.folio.id}>
                           Room {room.roomNumber} - {room.guest.firstName} {room.guest.lastName} - {room.folio.folioNumber} - Balance{" "}
-                          {formatMoney(Number(room.folio.balance))}
+                          {formatCurrency(room.folio.balance, room.folio.currencyCode ?? "TZS")}
                         </option>
                       ))}
                     </select>
@@ -1137,7 +1211,7 @@ export function PosTerminalApp() {
                       <div key={receipt.id} className="rounded border border-border bg-muted/45 p-3 text-sm">
                         <div className="flex items-center justify-between gap-3">
                           <span className="font-bold">{receipt.receiptNumber}</span>
-                          <span className="font-bold tabular-nums">{formatMoney(receipt.total)}</span>
+                          <span className="font-bold tabular-nums">{formatCurrency(receipt.total, receipt.currencyCode)}</span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
                           {receipt.paymentMethod.replace("_", " ")}
@@ -1245,12 +1319,17 @@ function rememberPosAssignment(outletId: string, terminalId: string) {
   if (terminalId) window.localStorage.setItem(preferredTerminalKey, terminalId);
 }
 
-function mapReceiptLines(lines: TicketLine[]): PaidReceipt["lines"] {
+function mapReceiptLines(lines: TicketLine[], currency: SaleCurrency): PaidReceipt["lines"] {
   return lines.map((line) => ({
     name: line.product.name,
     quantity: line.quantity,
-    amount: line.product.price * line.quantity
+    amount: (priceIn(line.product, currency) ?? 0) * line.quantity
   }));
+}
+
+function priceIn(product: TerminalProduct, currency: SaleCurrency) {
+  if (currency === "TZS") return product.price;
+  return product.priceUsd ?? null;
 }
 
 function formatPrepMessage(tickets: PrepTicket[]) {
@@ -1299,16 +1378,9 @@ function mapCatalogItem(item: CatalogItem): TerminalProduct {
     name: displayName,
     category: item.productVariant.product.category?.name ?? "Food",
     price: Number(item.price),
+    priceUsd: item.priceUsd === null || item.priceUsd === undefined ? null : Number(item.priceUsd),
     taxRate: Number(item.taxRate)
   };
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2
-  }).format(value);
 }
 
 function formatDateTime(value: string) {

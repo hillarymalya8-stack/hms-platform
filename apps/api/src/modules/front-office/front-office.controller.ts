@@ -9,6 +9,7 @@ import { CreateRoomTypeDto } from "./dto/create-room-type.dto";
 import { PostRoomChargeDto } from "./dto/post-room-charge.dto";
 import { SettleFolioPaymentDto } from "./dto/settle-folio-payment.dto";
 import { UpdateRoomChartDto } from "./dto/update-room-chart.dto";
+import { UpdateRoomTypeRatesDto } from "./dto/update-room-type-rates.dto";
 import { FrontOfficeService } from "./front-office.service";
 
 @Controller("front-office")
@@ -25,6 +26,16 @@ export class FrontOfficeController {
   @Post("room-types")
   createRoomType(@CurrentUser() user: UserContext, @Body() dto: CreateRoomTypeDto) {
     return this.frontOffice.createRoomType(user, dto);
+  }
+
+  @RequirePermissions("front_office.rooms.manage")
+  @Patch("room-types/:roomTypeId/rates")
+  updateRoomTypeRates(
+    @CurrentUser() user: UserContext,
+    @Param("roomTypeId") roomTypeId: string,
+    @Body() dto: UpdateRoomTypeRatesDto
+  ) {
+    return this.frontOffice.updateRoomTypeRates(user, roomTypeId, dto);
   }
 
   @RequirePermissions("front_office.view")
