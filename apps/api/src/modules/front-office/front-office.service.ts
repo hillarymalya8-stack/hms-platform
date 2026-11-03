@@ -17,6 +17,7 @@ import { CreateGuestDto } from "./dto/create-guest.dto";
 import { CreateReservationDto } from "./dto/create-reservation.dto";
 import { CreateRoomDto } from "./dto/create-room.dto";
 import { CreateRoomTypeDto } from "./dto/create-room-type.dto";
+import { ExtendStayDto } from "./dto/extend-stay.dto";
 import { PostRoomChargeDto } from "./dto/post-room-charge.dto";
 import { SettleFolioPaymentDto } from "./dto/settle-folio-payment.dto";
 import { UpdateRoomChartDto } from "./dto/update-room-chart.dto";
@@ -1218,6 +1219,126 @@ export class FrontOfficeService {
           totalAmount: money(item.totalAmount),
           postedAt: item.postedAt
         }
+      };
+    });
+  }
+
+  async extendStay(user: UserContext, reservationId: string, dto: ExtendStayDto) {
+    const propertyId = this.requireProperty(user);
+    const nights = dto.nights;
+    let overrideRate: Prisma.Decimal | undefined;
+    if (dto.nightlyRate !== undefined && dto.nightlyRate.trim() !== "") {
+      overrideRate = new Prisma.Decimal(dto.nightlyRate);
+      if (overrideRate.lt(0)) {
+        throw new BadRequestException("Nightly rate cannot be negative.");
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const reservation = await tx.reservation.findFirst({
+        where: {
+          id: reservationId,
+          propertyId
+        },
+        include: {
+          reservationRooms: true,
+          folios: true
+        }
+      });
+
+      if (!reservation) {
+        throw new NotFoundException("Reservation was not found.");
+      }
+
+      if (reservation.status !== ReservationStatus.CHECKED_IN) {
+        throw new ConflictException("Only checked-in guests can extend their stay.");
+      }
+
+      const previousDeparture = reservation.departureDate;
+      const newDeparture = new Date(previousDeparture.getTime() + nights * 24 * 60 * 60 * 1000);
+
+      for (const reservationRoom of reservation.reservationRooms) {
+        if (reservationRoom.roomId) {
+          await this.assertRoomAvailable(tx, reservationRoom.roomId, previousDeparture, newDeparture, reservation.id);
+        }
+      }
+
+      const extensionTotal = reservation.reservationRooms.reduce(
+        (sum, reservationRoom) => sum.plus((overrideRate ?? reservationRoom.nightlyRate).mul(nights)),
+        new Prisma.Decimal(0)
+      );
+
+      const folio =
+        reservation.folios.find((item) => item.status === FolioStatus.OPEN) ??
+        (await tx.folio.create({
+          data: {
+            propertyId,
+            reservationId: reservation.id,
+            guestId: reservation.primaryGuestId,
+            folioNumber: await this.nextFolioNumber(tx, propertyId, reservation.arrivalDate),
+            status: FolioStatus.OPEN
+          }
+        }));
+
+      const updatedReservation = await tx.reservation.update({
+        where: { id: reservation.id },
+        data: { departureDate: newDeparture }
+      });
+
+      let updatedBalance = folio.balance;
+      if (extensionTotal.gt(0)) {
+        await tx.folioItem.create({
+          data: {
+            folioId: folio.id,
+            itemType: FolioItemType.ROOM_CHARGE,
+            sourceType: "STAY_EXTENSION",
+            sourceId: reservation.id,
+            description: `Stay extended by ${nights} night${nights === 1 ? "" : "s"} (to ${newDeparture.toISOString().slice(0, 10)})`,
+            quantity: new Prisma.Decimal(nights),
+            unitPrice: extensionTotal.div(nights),
+            totalAmount: extensionTotal
+          }
+        });
+
+        const updatedFolio = await tx.folio.update({
+          where: { id: folio.id },
+          data: {
+            balance: {
+              increment: extensionTotal
+            }
+          }
+        });
+        updatedBalance = updatedFolio.balance;
+      }
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: user.organizationId,
+          propertyId,
+          userId: user.userId,
+          module: "front_office",
+          action: "extend_stay",
+          recordType: "reservation",
+          recordId: reservation.id,
+          previousValue: {
+            departureDate: previousDeparture.toISOString().slice(0, 10)
+          },
+          newValue: {
+            departureDate: newDeparture.toISOString().slice(0, 10),
+            extraNights: nights,
+            extensionCharge: money(extensionTotal),
+            ...(overrideRate ? { nightlyRate: money(overrideRate) } : {})
+          }
+        }
+      });
+
+      return {
+        reservationId: updatedReservation.id,
+        reservationNumber: updatedReservation.reservationNumber,
+        departureDate: updatedReservation.departureDate,
+        extraNights: nights,
+        extensionCharge: money(extensionTotal),
+        folioBalance: money(updatedBalance)
       };
     });
   }

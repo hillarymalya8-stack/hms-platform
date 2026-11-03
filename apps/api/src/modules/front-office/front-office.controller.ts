@@ -7,6 +7,7 @@ import { CreateGuestDto } from "./dto/create-guest.dto";
 import { CreateReservationDto } from "./dto/create-reservation.dto";
 import { CreateRoomDto } from "./dto/create-room.dto";
 import { CreateRoomTypeDto } from "./dto/create-room-type.dto";
+import { ExtendStayDto } from "./dto/extend-stay.dto";
 import { PostRoomChargeDto } from "./dto/post-room-charge.dto";
 import { SettleFolioPaymentDto } from "./dto/settle-folio-payment.dto";
 import { UpdateRoomChartDto } from "./dto/update-room-chart.dto";
@@ -97,6 +98,12 @@ export class FrontOfficeController {
   @Post("reservations/:reservationId/check-in")
   checkIn(@CurrentUser() user: UserContext, @Param("reservationId") reservationId: string, @Body() dto: CheckInDto) {
     return this.frontOffice.checkIn(user, reservationId, dto ?? {});
+  }
+
+  @RequirePermissions("front_office.reservations.check_in")
+  @Post("reservations/:reservationId/extend")
+  extendStay(@CurrentUser() user: UserContext, @Param("reservationId") reservationId: string, @Body() dto: ExtendStayDto) {
+    return this.frontOffice.extendStay(user, reservationId, dto);
   }
 
   @RequirePermissions("front_office.reservations.check_out")

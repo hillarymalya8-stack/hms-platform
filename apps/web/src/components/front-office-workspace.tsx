@@ -121,6 +121,16 @@ type CheckInTarget = {
   currencyCode: SaleCurrency;
 };
 
+type ExtendTarget = {
+  reservationId: string;
+  reservationNumber: string;
+  guestName: string;
+  departureDate: string;
+  nightlyRate: string;
+  roomCount: number;
+  currencyCode: SaleCurrency;
+};
+
 const emptyCheckInForm = {
   prepaid: false,
   mealPlan: "FULL_BOARD" as MealPlan,
@@ -181,6 +191,8 @@ export function FrontOfficeWorkspace() {
   const [invoiceTarget, setInvoiceTarget] = useState<{ id: string; number: string } | null>(null);
   const [checkInTarget, setCheckInTarget] = useState<CheckInTarget | null>(null);
   const [checkInForm, setCheckInForm] = useState(emptyCheckInForm);
+  const [extendTarget, setExtendTarget] = useState<ExtendTarget | null>(null);
+  const [extendForm, setExtendForm] = useState({ nights: "1", nightlyRate: "" });
 
   const [guestForm, setGuestForm] = useState({
     firstName: "",
@@ -577,6 +589,56 @@ export function FrontOfficeWorkspace() {
     if (ok) setCheckInTarget(null);
   }
 
+  function openExtend(target: ExtendTarget) {
+    setExtendTarget(target);
+    setExtendForm({ nights: "1", nightlyRate: target.nightlyRate });
+  }
+
+  async function submitExtend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!extendTarget || busy) return;
+
+    const nights = Number(extendForm.nights);
+    if (!Number.isInteger(nights) || nights < 1 || nights > 365) {
+      setMessage("Enter how many extra nights the guest is staying (1 to 365).");
+      return;
+    }
+    const rate = extendForm.nightlyRate.trim();
+    if (!rate || !Number.isFinite(Number(rate)) || Number(rate) < 0) {
+      setMessage("Enter a valid nightly rate for the extra nights.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<{
+      reservationNumber: string;
+      departureDate: string;
+      extensionCharge: string;
+      folioBalance: string;
+    }>(`/front-office/reservations/${extendTarget.reservationId}/extend`, {
+      method: "POST",
+      body: JSON.stringify({ nights, nightlyRate: rate })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    const currency = extendTarget.currencyCode;
+    setExtendTarget(null);
+    await loadData();
+    setMessage(
+      `${result.data.reservationNumber} extended by ${nights} night${nights === 1 ? "" : "s"} to ${formatDate(
+        result.data.departureDate
+      )}. ${formatCurrency(result.data.extensionCharge, currency)} added to the folio (balance ${formatCurrency(
+        result.data.folioBalance,
+        currency
+      )}).`
+    );
+  }
+
   async function transitionReservation(
     reservationId: string,
     action: "check-in" | "check-out",
@@ -751,6 +813,88 @@ export function FrontOfficeWorkspace() {
               <Button disabled={busy}>
                 <DoorOpen className="h-4 w-4" aria-hidden="true" />
                 Check in
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {extendTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="extend-stay-title"
+        >
+          <form
+            onSubmit={submitExtend}
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded border border-border bg-white p-5 shadow-lg"
+          >
+            <div className="mb-4 flex items-center gap-2">
+              <CalendarPlus className="h-5 w-5 text-primary" aria-hidden="true" />
+              <div>
+                <h4 id="extend-stay-title" className="font-bold">
+                  Extend stay - {extendTarget.guestName}
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  {extendTarget.reservationNumber} - currently departing {formatDate(extendTarget.departureDate)}
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">Extra nights</span>
+                <Input
+                  aria-label="Extra nights"
+                  type="number"
+                  min={1}
+                  max={365}
+                  step={1}
+                  value={extendForm.nights}
+                  onChange={(event) => setExtendForm({ ...extendForm, nights: event.target.value })}
+                />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">
+                  Nightly rate ({currencyLabel(extendTarget.currencyCode)})
+                </span>
+                <Input
+                  aria-label="Nightly rate for extra nights"
+                  inputMode="decimal"
+                  value={extendForm.nightlyRate}
+                  onChange={(event) => setExtendForm({ ...extendForm, nightlyRate: event.target.value })}
+                />
+              </label>
+            </div>
+            {(() => {
+              const nights = Number(extendForm.nights);
+              const rate = Number(extendForm.nightlyRate);
+              if (!Number.isInteger(nights) || nights < 1 || !Number.isFinite(rate)) return null;
+              const newDeparture = addDays(extendTarget.departureDate, nights);
+              return (
+                <div className="mt-4 rounded border border-primary/40 bg-primary/5 p-3 text-sm">
+                  <p>
+                    New departure: <span className="font-semibold">{formatDate(newDeparture)}</span>
+                  </p>
+                  <p className="mt-1">
+                    Added to folio:{" "}
+                    <span className="font-semibold">
+                      {formatCurrency(rate * nights * extendTarget.roomCount, extendTarget.currencyCode)}
+                    </span>
+                  </p>
+                </div>
+              );
+            })()}
+            <p className="mt-3 text-xs text-muted-foreground">
+              The extra nights are charged to the guest folio. Any prepaid credit is used first; anything above it is
+              paid at checkout.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setExtendTarget(null)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button disabled={busy}>
+                <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+                Extend stay
               </Button>
             </div>
           </form>
@@ -1118,6 +1262,29 @@ export function FrontOfficeWorkspace() {
                           >
                             Check out
                           </Button>
+                          {selectedStay.status === "CHECKED_IN" ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() =>
+                                openExtend({
+                                  reservationId: selectedStay.reservationId,
+                                  reservationNumber: selectedStay.reservationNumber,
+                                  guestName: `${selectedStay.guest.firstName} ${selectedStay.guest.lastName}`,
+                                  departureDate: selectedStay.departureDate,
+                                  nightlyRate: selectedStay.nightlyRate,
+                                  roomCount:
+                                    reservations.find((item) => item.id === selectedStay.reservationId)
+                                      ?.reservationRooms.length || 1,
+                                  currencyCode: selectedStay.currencyCode ?? "TZS"
+                                })
+                              }
+                            >
+                              <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+                              Extend stay
+                            </Button>
+                          ) : null}
                           <Button
                             type="button"
                             variant="secondary"
@@ -1517,6 +1684,27 @@ export function FrontOfficeWorkspace() {
                         >
                           Check out
                         </Button>
+                        {reservation.status === "CHECKED_IN" ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() =>
+                              openExtend({
+                                reservationId: reservation.id,
+                                reservationNumber: reservation.reservationNumber,
+                                guestName: `${reservation.primaryGuest.firstName} ${reservation.primaryGuest.lastName}`,
+                                departureDate: reservation.departureDate,
+                                nightlyRate: assigned?.nightlyRate ?? "0",
+                                roomCount: reservation.reservationRooms.length || 1,
+                                currencyCode: assigned?.currencyCode ?? "TZS"
+                              })
+                            }
+                          >
+                            <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+                            Extend stay
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           variant="secondary"
@@ -1580,6 +1768,12 @@ function providersForSettlementMethod(method: SettlementPaymentMethod) {
   if (method === "BANK_TRANSFER") return bankPaymentProviders;
   if (method === "MOBILE_MONEY") return mobileMoneyProviders;
   return [];
+}
+
+function addDays(value: string, days: number) {
+  const date = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
 }
 
 function dateInputValue(daysFromToday: number) {
