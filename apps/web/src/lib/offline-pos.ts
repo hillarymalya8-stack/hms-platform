@@ -64,6 +64,7 @@ export type CachedPosCatalog = {
     price: number;
     priceUsd?: number | null;
     taxRate: number;
+    menuDays?: number[];
   }>;
   cachedAt: string;
 };

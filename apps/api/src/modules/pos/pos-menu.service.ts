@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { canUseOutlet } from "@hms/shared";
+import { canUseOutlet, normalizeMenuDays } from "@hms/shared";
 import { PosOutletType, Prisma, ProductType } from "@prisma/client";
 import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
@@ -55,6 +55,7 @@ export class PosMenuService {
         active: product.active,
         stockTracked: product.stockTracked,
         productType: product.productType,
+        menuDays: product.menuDays,
         category: { id: product.category.id, name: product.category.name },
         variants: product.variants.map((variant) => ({
           id: variant.id,
@@ -128,6 +129,7 @@ export class PosMenuService {
           name: dto.name.trim(),
           sku,
           stockTracked: dto.stockTracked ?? false,
+          menuDays: normalizeMenuDays(dto.menuDays),
           productType: dto.stockTracked ? ProductType.STOCKED : ProductType.NON_STOCKED,
           variants: {
             create: {
@@ -149,6 +151,7 @@ export class PosMenuService {
         price: price.toFixed(2),
         priceUsd: priceUsd?.toFixed(2) ?? null,
         taxRate: taxRate.toFixed(4),
+        menuDays: normalizeMenuDays(dto.menuDays),
         outlets: outlets.map((outlet) => outlet.name)
       });
 
@@ -194,6 +197,7 @@ export class PosMenuService {
       name: product.name,
       categoryId: product.categoryId,
       active: product.active,
+      menuDays: product.menuDays,
       price: variant.basePrice.toFixed(2),
       outlets: currentScoped.map((entry) => ({
         outlet: entry.outlet.name,
@@ -210,7 +214,8 @@ export class PosMenuService {
         data: {
           name: dto.name?.trim(),
           categoryId: dto.categoryId,
-          active: dto.active
+          active: dto.active,
+          menuDays: dto.menuDays ? normalizeMenuDays(dto.menuDays) : undefined
         }
       });
 
@@ -263,6 +268,7 @@ export class PosMenuService {
         name: dto.name,
         categoryId: dto.categoryId,
         active: dto.active,
+        menuDays: dto.menuDays ? normalizeMenuDays(dto.menuDays) : undefined,
         price: price?.toFixed(2),
         priceUsd: priceUsd === undefined ? undefined : (priceUsd?.toFixed(2) ?? null),
         taxRate: taxRate?.toFixed(4),
