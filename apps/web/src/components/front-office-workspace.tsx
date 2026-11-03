@@ -51,6 +51,9 @@ type RoomChartRoom = Room & {
     guest: Guest;
     nightlyRate: string;
     currencyCode?: SaleCurrency;
+    mealPlan?: MealPlan | null;
+    companyName?: string | null;
+    prepaidAmount?: string;
     folio?: {
       id: string;
       folioNumber: string;
@@ -85,9 +88,13 @@ type Reservation = {
   departureDate: string;
   status: string;
   primaryGuest: Guest;
+  mealPlan?: MealPlan | null;
+  companyName?: string | null;
+  depositPaid?: string;
   reservationRooms: Array<{
     id: string;
     nightlyRate: string;
+    currencyCode?: SaleCurrency;
     room?: Room | null;
     roomType: RoomType;
   }>;
@@ -97,6 +104,29 @@ type Reservation = {
     status: string;
     balance: string;
   }>;
+};
+
+type MealPlan = "FULL_BOARD" | "HALF_BOARD" | "BED_AND_BREAKFAST";
+
+const mealPlans: Array<{ label: string; value: MealPlan; detail: string }> = [
+  { label: "Full board", value: "FULL_BOARD", detail: "Room, breakfast, lunch and dinner" },
+  { label: "Half board", value: "HALF_BOARD", detail: "Room, breakfast and one main meal" },
+  { label: "Bed & breakfast", value: "BED_AND_BREAKFAST", detail: "Room and breakfast" }
+];
+
+type CheckInTarget = {
+  reservationId: string;
+  reservationNumber: string;
+  guestName: string;
+  currencyCode: SaleCurrency;
+};
+
+const emptyCheckInForm = {
+  prepaid: false,
+  mealPlan: "FULL_BOARD" as MealPlan,
+  companyName: "",
+  prepaidAmount: "",
+  paymentReference: ""
 };
 
 type SettlementPaymentMethod = "CASH" | "CARD" | "MOBILE_MONEY" | "BANK_TRANSFER";
@@ -149,6 +179,8 @@ export function FrontOfficeWorkspace() {
   const [showReservation, setShowReservation] = useState(false);
   const [guestMode, setGuestMode] = useState<"new" | "existing">("new");
   const [invoiceTarget, setInvoiceTarget] = useState<{ id: string; number: string } | null>(null);
+  const [checkInTarget, setCheckInTarget] = useState<CheckInTarget | null>(null);
+  const [checkInForm, setCheckInForm] = useState(emptyCheckInForm);
 
   const [guestForm, setGuestForm] = useState({
     firstName: "",
@@ -517,16 +549,49 @@ export function FrontOfficeWorkspace() {
     await loadData();
   }
 
-  async function transitionReservation(reservationId: string, action: "check-in" | "check-out") {
+  function openCheckIn(target: CheckInTarget) {
+    setCheckInTarget(target);
+    setCheckInForm(emptyCheckInForm);
+  }
+
+  async function submitCheckIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!checkInTarget || busy) return;
+
+    let body: Record<string, string> = {};
+    if (checkInForm.prepaid) {
+      const amount = Number(checkInForm.prepaidAmount);
+      if (!checkInForm.prepaidAmount.trim() || !Number.isFinite(amount) || amount <= 0) {
+        setMessage("Enter the total amount already paid for this booking.");
+        return;
+      }
+      body = {
+        mealPlan: checkInForm.mealPlan,
+        prepaidAmount: checkInForm.prepaidAmount.trim(),
+        ...(checkInForm.companyName.trim() ? { companyName: checkInForm.companyName.trim() } : {}),
+        ...(checkInForm.paymentReference.trim() ? { paymentReference: checkInForm.paymentReference.trim() } : {})
+      };
+    }
+
+    const ok = await transitionReservation(checkInTarget.reservationId, "check-in", body);
+    if (ok) setCheckInTarget(null);
+  }
+
+  async function transitionReservation(
+    reservationId: string,
+    action: "check-in" | "check-out",
+    body?: Record<string, string>
+  ) {
     setBusy(true);
     const result = await apiRequest<Reservation>(`/front-office/reservations/${reservationId}/${action}`, {
-      method: "POST"
+      method: "POST",
+      ...(body ? { body: JSON.stringify(body) } : {})
     });
     setBusy(false);
 
     if (!result.ok) {
       setMessage(result.error);
-      return;
+      return false;
     }
 
     if (action === "check-out") setCheckoutTarget({ id: reservationId, number: result.data.reservationNumber });
@@ -534,6 +599,7 @@ export function FrontOfficeWorkspace() {
     setMessage(
       `${result.data.reservationNumber} moved to ${result.data.status}. Use Make invoice when you need an invoice.`
     );
+    return true;
   }
 
   function chooseRoom(room: RoomChartRoom) {
@@ -575,6 +641,121 @@ export function FrontOfficeWorkspace() {
 
   return (
     <div className="space-y-5">
+      {checkInTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="check-in-title"
+        >
+          <form
+            onSubmit={submitCheckIn}
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded border border-border bg-white p-5 shadow-lg"
+          >
+            <div className="mb-4 flex items-center gap-2">
+              <DoorOpen className="h-5 w-5 text-primary" aria-hidden="true" />
+              <div>
+                <h4 id="check-in-title" className="font-bold">
+                  Check in {checkInTarget.guestName}
+                </h4>
+                <p className="text-sm text-muted-foreground">{checkInTarget.reservationNumber}</p>
+              </div>
+            </div>
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-sm font-medium">Has this booking already been paid?</legend>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="prepaid"
+                  checked={!checkInForm.prepaid}
+                  onChange={() => setCheckInForm({ ...checkInForm, prepaid: false })}
+                />
+                No - guest pays at checkout
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="prepaid"
+                  checked={checkInForm.prepaid}
+                  onChange={() => setCheckInForm({ ...checkInForm, prepaid: true })}
+                />
+                Yes - paid before arrival (company or guest)
+              </label>
+            </fieldset>
+            {checkInForm.prepaid ? (
+              <div className="mt-4 space-y-3">
+                <fieldset>
+                  <legend className="mb-2 text-sm font-medium">What was paid for?</legend>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {mealPlans.map((plan) => (
+                      <label
+                        key={plan.value}
+                        className={cn(
+                          "cursor-pointer rounded border p-2 text-sm",
+                          checkInForm.mealPlan === plan.value ? "border-primary bg-primary/5" : "border-border"
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="mealPlan"
+                          className="sr-only"
+                          checked={checkInForm.mealPlan === plan.value}
+                          onChange={() => setCheckInForm({ ...checkInForm, mealPlan: plan.value })}
+                        />
+                        <span className="block font-semibold">{plan.label}</span>
+                        <span className="block text-xs text-muted-foreground">{plan.detail}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">Company name</span>
+                  <Input
+                    aria-label="Company name"
+                    value={checkInForm.companyName}
+                    onChange={(event) => setCheckInForm({ ...checkInForm, companyName: event.target.value })}
+                    placeholder="Leave empty if the guest paid personally"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">
+                    Total amount paid ({currencyLabel(checkInTarget.currencyCode)})
+                  </span>
+                  <Input
+                    aria-label="Total amount paid"
+                    inputMode="decimal"
+                    value={checkInForm.prepaidAmount}
+                    onChange={(event) => setCheckInForm({ ...checkInForm, prepaidAmount: event.target.value })}
+                    placeholder="0"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">Payment reference (optional)</span>
+                  <Input
+                    aria-label="Payment reference"
+                    value={checkInForm.paymentReference}
+                    onChange={(event) => setCheckInForm({ ...checkInForm, paymentReference: event.target.value })}
+                    placeholder="Voucher, LPO or bank reference"
+                  />
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  The amount is credited to the guest folio. If the guest spends more than this, the remaining balance
+                  must be paid at checkout.
+                </p>
+              </div>
+            ) : null}
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setCheckInTarget(null)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button disabled={busy}>
+                <DoorOpen className="h-4 w-4" aria-hidden="true" />
+                Check in
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-bold">Front Office</h3>
@@ -919,13 +1100,20 @@ export function FrontOfficeWorkspace() {
                             type="button"
                             variant="secondary"
                             disabled={busy || selectedStay.status !== "CONFIRMED"}
-                            onClick={() => transitionReservation(selectedStay.reservationId, "check-in")}
+                            onClick={() =>
+                              openCheckIn({
+                                reservationId: selectedStay.reservationId,
+                                reservationNumber: selectedStay.reservationNumber,
+                                guestName: `${selectedStay.guest.firstName} ${selectedStay.guest.lastName}`,
+                                currencyCode: selectedStay.currencyCode ?? "TZS"
+                              })
+                            }
                           >
                             Check in
                           </Button>
                           <Button
                             type="button"
-                            disabled={busy || selectedStay.status !== "CHECKED_IN" || selectedBalance !== 0}
+                            disabled={busy || selectedStay.status !== "CHECKED_IN" || selectedBalance > 0}
                             onClick={() => transitionReservation(selectedStay.reservationId, "check-out")}
                           >
                             Check out
@@ -945,8 +1133,17 @@ export function FrontOfficeWorkspace() {
                         </>
                       )}
                     </div>
-                    {selectedStay?.status === "CHECKED_IN" && selectedBalance !== 0 ? (
-                      <p className="text-sm text-muted-foreground">Settle the folio balance below before checkout.</p>
+                    {selectedStay?.status === "CHECKED_IN" && selectedBalance > 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {Number(selectedStay.prepaidAmount ?? 0) > 0
+                          ? "The guest has used more than the prepaid amount. Collect the remaining balance below before checkout."
+                          : "Settle the folio balance below before checkout."}
+                      </p>
+                    ) : null}
+                    {selectedStay?.status === "CHECKED_IN" && selectedBalance < 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Prepaid amount not fully used ({formatCurrency(-selectedBalance, selectedStay.currencyCode ?? "TZS")} credit). The guest can check out.
+                      </p>
                     ) : null}
                     <details>
                       <summary className="cursor-pointer text-sm font-semibold">Edit room and stay details</summary>
@@ -1063,6 +1260,28 @@ export function FrontOfficeWorkspace() {
                             {formatDate(selectedChartRoom.currentStay.departureDate)}
                           </p>
                         </div>
+                        {Number(selectedChartRoom.currentStay.prepaidAmount ?? 0) > 0 ? (
+                          <div className="rounded border border-primary/40 bg-primary/5 p-3 text-sm">
+                            <p className="font-bold">
+                              Prepaid booking - {mealPlanLabel(selectedChartRoom.currentStay.mealPlan)}
+                            </p>
+                            <p className="mt-1 text-muted-foreground">
+                              {selectedChartRoom.currentStay.companyName
+                                ? `Paid by ${selectedChartRoom.currentStay.companyName}`
+                                : "Paid before arrival"}{" "}
+                              -{" "}
+                              {formatCurrency(
+                                selectedChartRoom.currentStay.prepaidAmount,
+                                selectedChartRoom.currentStay.currencyCode ?? "TZS"
+                              )}
+                            </p>
+                            <p className="mt-1 font-semibold">
+                              {selectedBalance > 0
+                                ? `Guest to pay at checkout: ${formatCurrency(selectedBalance, selectedChartRoom.currentStay.currencyCode ?? "TZS")}`
+                                : `Still covered by prepayment: ${formatCurrency(-selectedBalance, selectedChartRoom.currentStay.currencyCode ?? "TZS")}`}
+                            </p>
+                          </div>
+                        ) : null}
                         <div className="grid gap-3 sm:grid-cols-3">
                           <RoomFact
                             label="Room/postings"
@@ -1256,6 +1475,13 @@ export function FrontOfficeWorkspace() {
                           {reservation.status}
                         </Badge>
                       </div>
+                      {Number(reservation.depositPaid ?? 0) > 0 ? (
+                        <p className="mt-3 rounded bg-background/80 px-3 py-2 text-sm">
+                          Prepaid {mealPlanLabel(reservation.mealPlan)}
+                          {reservation.companyName ? ` by ${reservation.companyName}` : ""} -{" "}
+                          {formatCurrency(reservation.depositPaid, assigned?.currencyCode ?? "TZS")}
+                        </p>
+                      ) : null}
                       {reservation.folios[0] ? (
                         <p className="mt-3 rounded bg-background/80 px-3 py-2 text-sm">
                           Folio {reservation.folios[0].folioNumber} - Balance{" "}
@@ -1267,7 +1493,14 @@ export function FrontOfficeWorkspace() {
                           type="button"
                           variant="secondary"
                           disabled={busy || reservation.status !== "CONFIRMED" || !assigned?.room}
-                          onClick={() => transitionReservation(reservation.id, "check-in")}
+                          onClick={() =>
+                            openCheckIn({
+                              reservationId: reservation.id,
+                              reservationNumber: reservation.reservationNumber,
+                              guestName: `${reservation.primaryGuest.firstName} ${reservation.primaryGuest.lastName}`,
+                              currencyCode: assigned?.currencyCode ?? "TZS"
+                            })
+                          }
                         >
                           <DoorOpen className="h-4 w-4" aria-hidden="true" />
                           Check in
@@ -1278,7 +1511,7 @@ export function FrontOfficeWorkspace() {
                           disabled={
                             busy ||
                             reservation.status !== "CHECKED_IN" ||
-                            reservation.folios.some((folio) => Number(folio.balance) !== 0)
+                            reservation.folios.some((folio) => folio.status === "OPEN" && Number(folio.balance) > 0)
                           }
                           onClick={() => transitionReservation(reservation.id, "check-out")}
                         >
@@ -1333,6 +1566,10 @@ function roomStatusLabel(room: RoomChartRoom) {
   }
 
   return room.occupancyStatus.toLowerCase().replaceAll("_", " ");
+}
+
+function mealPlanLabel(plan?: MealPlan | null) {
+  return mealPlans.find((entry) => entry.value === plan)?.label ?? "booking";
 }
 
 function formatDate(value: string) {

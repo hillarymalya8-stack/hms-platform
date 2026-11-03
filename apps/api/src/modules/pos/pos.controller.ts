@@ -1,9 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { CurrentUser } from "../../common/auth/current-user.decorator";
+import { RequireAnyPermissions } from "../../common/auth/require-any-permissions.decorator";
 import { RequirePermissions } from "../../common/auth/require-permissions.decorator";
 import { UserContext } from "../../common/auth/user-context";
 import { CreatePosOrderDto } from "./dto/create-pos-order.dto";
 import { PayPosOrderDto } from "./dto/pay-pos-order.dto";
+import { UpdatePosOrderDto } from "./dto/update-pos-order.dto";
+import { VoidPosOrderDto } from "./dto/void-pos-order.dto";
 import { PosService } from "./pos.service";
 
 @Controller("pos")
@@ -56,5 +59,18 @@ export class PosController {
   @Post("orders/:orderId/payments")
   payOrder(@CurrentUser() user: UserContext, @Param("orderId") orderId: string, @Body() dto: PayPosOrderDto) {
     return this.pos.payOrder(user, orderId, dto);
+  }
+
+  @RequirePermissions("pos.orders.create")
+  @Patch("orders/:orderId")
+  updateOrder(@CurrentUser() user: UserContext, @Param("orderId") orderId: string, @Body() dto: UpdatePosOrderDto) {
+    return this.pos.updateOrder(user, orderId, dto);
+  }
+
+  // Cashiers can void unpaid orders; voiding a paid order also needs pos.orders.void (checked in the service).
+  @RequireAnyPermissions("pos.orders.create", "pos.orders.void")
+  @Post("orders/:orderId/void")
+  voidOrder(@CurrentUser() user: UserContext, @Param("orderId") orderId: string, @Body() dto: VoidPosOrderDto) {
+    return this.pos.voidOrder(user, orderId, dto);
   }
 }

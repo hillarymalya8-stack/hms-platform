@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Calculator, CreditCard, Minus, Plus, ReceiptText, RefreshCcw, Send, Store, Trash2, Utensils } from "lucide-react";
+import { Ban, Calculator, CreditCard, Minus, Pencil, Plus, ReceiptText, RefreshCcw, Send, Store, Trash2, Utensils } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,14 +54,23 @@ type CartLine = { item: MenuItem; quantity: number };
 type PosOrder = {
   id: string;
   orderNumber: string;
-  status: "OPEN" | "HELD" | "PAID" | "VOIDED" | "REFUNDED" | string;
+  status: "OPEN" | "HELD" | "PAID" | "VOID" | "REFUNDED" | string;
+  voidReason?: string | null;
+  voidedAt?: string | null;
   serviceType: string;
   grandTotal: string | number;
   createdAt: string;
   folioId?: string | null;
   outlet: { id: string; name: string; outletType: PosOutletType };
   table?: { id: string; tableNumber: string } | null;
-  items: Array<{ id: string; quantity: string | number; totalAmount: string | number; productVariant: { product: { name: string } } }>;
+  items: Array<{
+    id: string;
+    productVariantId: string;
+    quantity: string | number;
+    unitPrice: string | number;
+    totalAmount: string | number;
+    productVariant: { name?: string; product: { name: string } };
+  }>;
   payments?: Array<{
     id: string;
     systemReceiptNumber: string;
@@ -96,9 +105,15 @@ export function PosWorkspace() {
   const [externalReceiptNumber, setExternalReceiptNumber] = useState("");
   const [message, setMessage] = useState("Loading POS outlets...");
   const [busy, setBusy] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState("");
+  const [voidingOrderId, setVoidingOrderId] = useState("");
+  const [voidReason, setVoidReason] = useState("");
 
   const canCreate = permissions.includes("pos.orders.create");
   const canPay = permissions.includes("pos.orders.pay");
+  // Cashiers can void unpaid checks; voiding a paid sale needs supervisor void permission.
+  const canVoidPaid = permissions.includes("pos.orders.void");
+  const canVoidOpen = canCreate || canVoidPaid;
   const selectedOutlet = outlets.find((outlet) => outlet.id === selectedOutletId);
   const selectedTable = selectedOutlet?.tables.find((table) => table.id === selectedTableId);
   const weekday = useMenuWeekday();
@@ -120,7 +135,10 @@ export function PosWorkspace() {
   const outletOrders = orders.filter((order) => !selectedOutletId || order.outlet.id === selectedOutletId);
   const openOrders = outletOrders.filter((order) => order.status === "OPEN" || order.status === "HELD");
   const paidOrders = outletOrders.filter((order) => order.status === "PAID");
+  const voidedOrders = outletOrders.filter((order) => order.status === "VOID");
   const payingOrder = orders.find((order) => order.id === payingOrderId);
+  const editingOrder = orders.find((order) => order.id === editingOrderId);
+  const voidingOrder = orders.find((order) => order.id === voidingOrderId);
   const payingBalance = payingOrder ? orderBalance(payingOrder) : 0;
   const referenceRequired = ["CARD", "MOBILE_MONEY", "BANK_TRANSFER"].includes(paymentMethod);
 
@@ -164,6 +182,8 @@ export function PosWorkspace() {
     setSelectedOutletId(outletId);
     setSelectedTableId(takeawayValue);
     setCart([]);
+    setEditingOrderId("");
+    setVoidingOrderId("");
     setActiveCategory("All");
     if (!outlet) return;
 
@@ -209,7 +229,105 @@ export function PosWorkspace() {
     );
   }
 
+  function startEdit(order: PosOrder) {
+    const lines: CartLine[] = order.items.map((line) => {
+      const menuItem = menu.find((item) => item.productVariantId === line.productVariantId);
+      const variantName = line.productVariant.name;
+      const isDefaultVariant = !variantName || ["regular", "standard", "default"].includes(variantName.toLowerCase());
+      return {
+        item: menuItem ?? {
+          productVariantId: line.productVariantId,
+          name: isDefaultVariant ? line.productVariant.product.name : `${line.productVariant.product.name} ${variantName}`,
+          category: "Other",
+          price: Number(line.unitPrice),
+          taxRate: 0,
+          menuDays: []
+        },
+        quantity: Number(line.quantity)
+      };
+    });
+    setCart(lines);
+    setEditingOrderId(order.id);
+    setPayingOrderId("");
+    setVoidingOrderId("");
+    setMessage(`Editing ${order.orderNumber}. Change the items, then press Save changes.`);
+  }
+
+  function cancelEdit() {
+    setEditingOrderId("");
+    setCart([]);
+    setMessage("Edit cancelled. The order was not changed.");
+  }
+
+  async function saveOrderEdit() {
+    if (!editingOrder) return;
+    if (cart.length === 0) {
+      setMessage("An order needs at least one item. Use Void to cancel the whole order.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<PosOrder>(`/pos/orders/${editingOrder.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        items: cart.map((line) => ({ productVariantId: line.item.productVariantId, quantity: String(line.quantity) }))
+      })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setCart([]);
+    setEditingOrderId("");
+    setMessage(`${result.data.orderNumber} updated. New total ${formatMoney(Number(result.data.grandTotal))}.`);
+    await loadOutlets(selectedOutletId);
+  }
+
+  function startVoid(order: PosOrder) {
+    setVoidingOrderId(order.id);
+    setVoidReason("");
+    setPayingOrderId("");
+  }
+
+  async function submitVoid(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!voidingOrder) return;
+    if (voidReason.trim().length < 3) {
+      setMessage("Give a short reason for voiding this order.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<PosOrder>(`/pos/orders/${voidingOrder.id}/void`, {
+      method: "POST",
+      body: JSON.stringify({ reason: voidReason.trim() })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    if (editingOrderId === voidingOrder.id) {
+      setEditingOrderId("");
+      setCart([]);
+    }
+    setVoidingOrderId("");
+    setVoidReason("");
+    setMessage(`${result.data.orderNumber} voided.`);
+    await loadOutlets(selectedOutletId);
+  }
+
   async function sendOrder() {
+    if (editingOrder) {
+      await saveOrderEdit();
+      return;
+    }
+
     if (!selectedOutlet || cart.length === 0) {
       setMessage("Add at least one item before sending the order.");
       return;
@@ -419,6 +537,18 @@ export function PosWorkspace() {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-bold tabular-nums">{formatMoney(orderBalance(order))}</span>
+                    {canCreate && !(order.payments ?? []).some((payment) => payment.status === "COMPLETED") ? (
+                      <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => startEdit(order)} disabled={busy}>
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
+                        Edit
+                      </Button>
+                    ) : null}
+                    {canVoidOpen ? (
+                      <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => startVoid(order)} disabled={busy}>
+                        <Ban className="h-4 w-4" aria-hidden="true" />
+                        Void
+                      </Button>
+                    ) : null}
                     {canPay ? (
                       <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => startPayment(order.id)}>
                         <CreditCard className="h-4 w-4" aria-hidden="true" />
@@ -438,7 +568,7 @@ export function PosWorkspace() {
           <div className="border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <ReceiptText className="h-4 w-4 text-primary" aria-hidden="true" />
-              <h3 className="font-bold">New Order</h3>
+              <h3 className="font-bold">{editingOrder ? `Edit ${editingOrder.orderNumber}` : "New Order"}</h3>
             </div>
           </div>
           <div className="min-h-[160px] divide-y divide-border">
@@ -476,16 +606,57 @@ export function PosWorkspace() {
             </div>
             <div className="grid gap-2 pt-2 sm:grid-cols-2">
               <Button type="button" onClick={() => void sendOrder()} disabled={busy || cart.length === 0 || !canCreate}>
-                <Send className="h-4 w-4" aria-hidden="true" />
-                Send order
+                {editingOrder ? <Pencil className="h-4 w-4" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+                {editingOrder ? "Save changes" : "Send order"}
               </Button>
-              <Button type="button" variant="secondary" onClick={() => setCart([])} disabled={cart.length === 0}>
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Clear
-              </Button>
+              {editingOrder ? (
+                <Button type="button" variant="secondary" onClick={cancelEdit} disabled={busy}>
+                  Cancel edit
+                </Button>
+              ) : (
+                <Button type="button" variant="secondary" onClick={() => setCart([])} disabled={cart.length === 0}>
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Clear
+                </Button>
+              )}
             </div>
           </div>
         </div>
+
+        {voidingOrder ? (
+          <form onSubmit={submitVoid} className="rounded border border-red-300 bg-white p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h4 className="font-bold">Void {voidingOrder.orderNumber}</h4>
+              <span className="font-bold tabular-nums">{formatMoney(Number(voidingOrder.grandTotal))}</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {voidingOrder.items.map((item) => `${Number(item.quantity)}x ${item.productVariant.product.name}`).join(", ")}
+            </p>
+            {voidingOrder.status === "PAID" ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                This sale is paid. Its payment is cancelled{voidingOrder.folioId ? " and the room charge is removed from the guest folio" : ""}. Return any cash to the guest.
+              </p>
+            ) : null}
+            <label className="mt-3 block space-y-1.5">
+              <span className="text-sm font-medium">Reason</span>
+              <Input
+                value={voidReason}
+                onChange={(event) => setVoidReason(event.target.value)}
+                placeholder="e.g. Wrong item entered"
+                aria-label="Void reason"
+              />
+            </label>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <Button disabled={busy || voidReason.trim().length < 3}>
+                <Ban className="h-4 w-4" aria-hidden="true" />
+                Void order
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => setVoidingOrderId("")}>
+                Keep order
+              </Button>
+            </div>
+          </form>
+        ) : null}
 
         {payingOrder ? (
           <form onSubmit={submitPayment} className="rounded border border-primary bg-white p-4">
@@ -558,7 +729,21 @@ export function PosWorkspace() {
                           {payment ? ` · ${payment.paymentMethod.replaceAll("_", " ")}` : ""}
                         </p>
                       </div>
-                      <span className="font-bold tabular-nums">{formatMoney(Number(order.grandTotal))}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold tabular-nums">{formatMoney(Number(order.grandTotal))}</span>
+                        {canVoidPaid ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-7 px-2"
+                            onClick={() => startVoid(order)}
+                            disabled={busy}
+                            aria-label={`Void ${order.orderNumber}`}
+                          >
+                            <Ban className="h-4 w-4" aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                     {payment ? (
                       <p className="mt-2 text-xs text-muted-foreground">
@@ -571,6 +756,28 @@ export function PosWorkspace() {
               })
             )}
           </div>
+          {!canVoidPaid && paidOrders.length > 0 ? (
+            <p className="mt-3 text-xs text-muted-foreground">Ask a supervisor to void a paid sale.</p>
+          ) : null}
+          {voidedOrders.length > 0 ? (
+            <details className="mt-3 text-sm">
+              <summary className="cursor-pointer font-semibold">Voided orders ({voidedOrders.length})</summary>
+              <div className="mt-2 space-y-2">
+                {voidedOrders.slice(0, 10).map((order) => (
+                  <div key={order.id} className="rounded border border-border bg-background/70 p-2">
+                    <div className="flex justify-between gap-3">
+                      <span className="font-bold line-through">{order.orderNumber}</span>
+                      <span className="tabular-nums line-through">{formatMoney(Number(order.grandTotal))}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {order.voidReason ?? "No reason"}
+                      {order.voidedAt ? ` · ${formatDateTime(order.voidedAt)}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       </div>
     </div>

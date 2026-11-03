@@ -12,6 +12,7 @@ import {
 } from "@prisma/client";
 import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
+import { CheckInDto, MealPlan } from "./dto/check-in.dto";
 import { CreateGuestDto } from "./dto/create-guest.dto";
 import { CreateReservationDto } from "./dto/create-reservation.dto";
 import { CreateRoomDto } from "./dto/create-room.dto";
@@ -224,6 +225,9 @@ export class FrontOfficeService {
                 phone: reservation.primaryGuest.phone
               },
               nightlyRate: assignedRoom ? money(assignedRoom.nightlyRate) : "0.00",
+              mealPlan: reservation.mealPlan,
+              companyName: reservation.companyName,
+              prepaidAmount: money(reservation.depositPaid),
               currencyCode: assignedRoom?.currencyCode ?? "TZS",
               folio: folio
                 ? {
@@ -852,8 +856,26 @@ export class FrontOfficeService {
     });
   }
 
-  async checkIn(user: UserContext, reservationId: string) {
+  async checkIn(user: UserContext, reservationId: string, dto: CheckInDto = {}) {
     const propertyId = this.requireProperty(user);
+    const companyName = dto.companyName?.trim() || undefined;
+    const paymentReference = dto.paymentReference?.trim() || undefined;
+    const prepaidText = dto.prepaidAmount?.trim();
+    let prepaidAmount = new Prisma.Decimal(0);
+    if (prepaidText) {
+      try {
+        prepaidAmount = new Prisma.Decimal(prepaidText);
+      } catch {
+        throw new BadRequestException("Enter the total amount already paid as a number.");
+      }
+      if (prepaidAmount.lt(0)) {
+        throw new BadRequestException("Amount already paid cannot be negative.");
+      }
+    }
+    const isPrepaid = prepaidAmount.gt(0);
+    if (isPrepaid && !dto.mealPlan) {
+      throw new BadRequestException("Choose what the booking paid for: Full board, Half board or Bed & breakfast.");
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const reservation = await tx.reservation.findFirst({
@@ -925,11 +947,59 @@ export class FrontOfficeService {
         });
       }
 
+      if (isPrepaid) {
+        const currencyCode = reservation.reservationRooms[0]?.currencyCode ?? "TZS";
+        const paidBy = companyName ?? "guest";
+        await tx.folioItem.create({
+          data: {
+            folioId: folio.id,
+            itemType: FolioItemType.DEPOSIT,
+            sourceType: "PREPAID_BOOKING",
+            sourceId: reservation.id,
+            description: `Prepaid ${mealPlanLabel(dto.mealPlan!)} by ${paidBy}${paymentReference ? ` (ref ${paymentReference})` : ""}`,
+            quantity: new Prisma.Decimal(1),
+            unitPrice: prepaidAmount,
+            totalAmount: prepaidAmount
+          }
+        });
+
+        await tx.folio.update({
+          where: { id: folio.id },
+          data: {
+            balance: {
+              decrement: prepaidAmount
+            }
+          }
+        });
+
+        await tx.auditLog.create({
+          data: {
+            organizationId: user.organizationId,
+            propertyId,
+            userId: user.userId,
+            module: "front_office",
+            action: "record_prepaid_booking",
+            recordType: "reservation",
+            recordId: reservation.id,
+            newValue: {
+              mealPlan: dto.mealPlan,
+              companyName,
+              paymentReference,
+              prepaidAmount: prepaidAmount.toString(),
+              currencyCode
+            }
+          }
+        });
+      }
+
       const updatedReservation = await tx.reservation.update({
         where: { id: reservation.id },
         data: {
           status: ReservationStatus.CHECKED_IN,
           checkedInAt: new Date(),
+          ...(dto.mealPlan ? { mealPlan: dto.mealPlan } : {}),
+          ...(companyName ? { companyName } : {}),
+          ...(isPrepaid ? { depositPaid: { increment: prepaidAmount } } : {}),
           reservationRooms: {
             updateMany: {
               where: { reservationId: reservation.id },
@@ -1176,8 +1246,10 @@ export class FrontOfficeService {
       }
 
       const openFolio = reservation.folios.find((folio) => folio.status === FolioStatus.OPEN);
-      if (openFolio && !openFolio.balance.equals(0)) {
-        throw new ConflictException("Guest folio must be settled before check-out.");
+      if (openFolio && openFolio.balance.gt(0)) {
+        throw new ConflictException(
+          `Guest must pay the remaining balance of ${money(openFolio.balance)} before check-out.`
+        );
       }
 
       const updatedReservation = await tx.reservation.update({
@@ -1235,7 +1307,8 @@ export class FrontOfficeService {
             status: reservation.status
           },
           newValue: {
-            status: ReservationStatus.CHECKED_OUT
+            status: ReservationStatus.CHECKED_OUT,
+            ...(openFolio && openFolio.balance.lt(0) ? { unusedPrepaidCredit: money(openFolio.balance.negated()) } : {})
           }
         }
       });
@@ -1385,6 +1458,12 @@ function stayNights(arrivalDate: Date, departureDate: Date) {
 
 function money(value: Prisma.Decimal) {
   return value.toFixed(2);
+}
+
+function mealPlanLabel(plan: MealPlan) {
+  if (plan === "FULL_BOARD") return "Full board";
+  if (plan === "HALF_BOARD") return "Half board";
+  return "Bed & breakfast";
 }
 
 function normalizeProvider(value?: string) {

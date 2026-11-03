@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { FolioStatus, PaymentStatus, Prisma, ReservationStatus } from "@prisma/client";
+import { FolioStatus, PaymentStatus, PosOrderStatus, Prisma, ReservationStatus } from "@prisma/client";
 import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
 
@@ -154,10 +154,13 @@ export class ReportsService {
         .reduce((sum, payment) => sum.plus(payment.amount), new Prisma.Decimal(0));
       const itemCount = order.items.reduce((sum, item) => sum + Number(item.quantity), 0);
 
-      grossSales = grossSales.plus(order.grandTotal);
-      paidSales = paidSales.plus(paidTotal);
-      taxTotal = taxTotal.plus(order.taxTotal);
-      outletTotals.set(order.outlet.name, (outletTotals.get(order.outlet.name) ?? new Prisma.Decimal(0)).plus(order.grandTotal));
+      // Voided orders stay on the report for audit but do not count as sales.
+      if (order.status !== PosOrderStatus.VOID) {
+        grossSales = grossSales.plus(order.grandTotal);
+        paidSales = paidSales.plus(paidTotal);
+        taxTotal = taxTotal.plus(order.taxTotal);
+        outletTotals.set(order.outlet.name, (outletTotals.get(order.outlet.name) ?? new Prisma.Decimal(0)).plus(order.grandTotal));
+      }
 
       for (const payment of order.payments) {
         if (payment.status !== PaymentStatus.COMPLETED) continue;
