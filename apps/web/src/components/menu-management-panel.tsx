@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
+import { describeMenuDays, isServedOnDay, menuWeekdays, normalizeMenuDays } from "@hms/shared";
 
 type OutletType = "RESTAURANT" | "BAR" | "ROOM_SERVICE" | "SPA" | "OTHER";
 
@@ -29,6 +30,7 @@ type MenuProduct = {
   sku: string;
   active: boolean;
   stockTracked: boolean;
+  menuDays: number[];
   category: { id: string; name: string };
   variants: Array<{ id: string; name: string; sku: string; active: boolean; basePrice: string; outlets: OutletPrice[] }>;
 };
@@ -45,6 +47,7 @@ type ProductDraft = {
   priceUsd: string;
   taxPercent: string;
   outletIds: string[];
+  menuDays: number[];
 };
 
 type EditDraft = {
@@ -55,9 +58,10 @@ type EditDraft = {
   priceUsd: string;
   taxPercent: string;
   outletIds: string[];
+  menuDays: number[];
 };
 
-const emptyDraft: ProductDraft = { name: "", sku: "", categoryId: "", price: "", priceUsd: "", taxPercent: "0", outletIds: [] };
+const emptyDraft: ProductDraft = { name: "", sku: "", categoryId: "", price: "", priceUsd: "", taxPercent: "0", outletIds: [], menuDays: [] };
 
 export function MenuManagementPanel({ canManageTables = false }: { canManageTables?: boolean }) {
   const [menu, setMenu] = useState<MenuResponse>({ outlets: [], categories: [], products: [] });
@@ -67,6 +71,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
   const [error, setError] = useState(false);
   const [search, setSearch] = useState("");
   const [filterCategoryId, setFilterCategoryId] = useState("");
+  const [filterDay, setFilterDay] = useState("");
   const [showRetired, setShowRetired] = useState(false);
   const [categoryName, setCategoryName] = useState("");
   const [draft, setDraft] = useState<ProductDraft>(emptyDraft);
@@ -84,9 +89,10 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
       (product) =>
         (showRetired || product.active) &&
         (!filterCategoryId || product.category.id === filterCategoryId) &&
+        (!filterDay || isServedOnDay(product.menuDays, Number(filterDay))) &&
         (!term || product.name.toLowerCase().includes(term) || product.sku.toLowerCase().includes(term))
     );
-  }, [menu.products, search, filterCategoryId, showRetired]);
+  }, [menu.products, search, filterCategoryId, filterDay, showRetired]);
 
   useEffect(() => {
     void loadMenu();
@@ -197,7 +203,8 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
         price,
         priceUsd: priceUsd || undefined,
         taxRate,
-        outletIds: draft.outletIds
+        outletIds: draft.outletIds,
+        menuDays: normalizeMenuDays(draft.menuDays)
       })
     });
     setBusy(false);
@@ -208,7 +215,13 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
     }
 
     upsertProduct(result.data);
-    setDraft((current) => ({ ...emptyDraft, categoryId: current.categoryId, taxPercent: current.taxPercent, outletIds: current.outletIds }));
+    setDraft((current) => ({
+      ...emptyDraft,
+      categoryId: current.categoryId,
+      taxPercent: current.taxPercent,
+      outletIds: current.outletIds,
+      menuDays: current.menuDays
+    }));
     setSkuTouched(false);
     report(`${result.data.name} added at ${result.data.variants[0]?.outlets.map((entry) => entry.outletName).join(" and ") || "no outlets"}.`);
   }
@@ -240,7 +253,15 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
 
     const saved = await patchProduct(
       product,
-      { name: edit.name.trim(), categoryId: edit.categoryId, price, priceUsd, taxRate, outletIds: edit.outletIds },
+      {
+        name: edit.name.trim(),
+        categoryId: edit.categoryId,
+        price,
+        priceUsd,
+        taxRate,
+        outletIds: edit.outletIds,
+        menuDays: normalizeMenuDays(edit.menuDays)
+      },
       `${edit.name.trim()} updated.`
     );
     if (saved) setEdit(null);
@@ -255,7 +276,8 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
       price: outlets[0]?.price ?? product.variants[0]?.basePrice ?? "0.00",
       priceUsd: outlets[0]?.priceUsd ?? "",
       taxPercent: fractionToPercent(outlets[0]?.taxRate ?? "0"),
-      outletIds: outlets.map((entry) => entry.outletId)
+      outletIds: outlets.map((entry) => entry.outletId),
+      menuDays: product.menuDays ?? []
     });
   }
 
@@ -429,8 +451,9 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
             selected={draft.outletIds}
             onChange={(outletIds) => setDraft({ ...draft, outletIds })}
           />
+          <DayPicker selected={draft.menuDays} onChange={(menuDays) => setDraft({ ...draft, menuDays })} />
           <p className="mt-2 text-xs text-muted-foreground">
-            Prices exclude tax; tax is added at the till. The POS uses the TSh or USD price depending on the currency the cashier sells in; leave USD empty for TSh-only items. Bar sales deduct Bar Store stock when the SKU matches an inventory item.
+            Prices exclude tax; tax is added at the till. The POS uses the TSh or USD price depending on the currency the cashier sells in; leave USD empty for TSh-only items. Pick serving days for daily buffet dishes; with no day picked the item is sold every day. Bar sales deduct Bar Store stock when the SKU matches an inventory item.
           </p>
           <Button className="mt-3" disabled={busy || menu.outlets.length === 0}>
             <Plus className="h-4 w-4" aria-hidden="true" />
@@ -485,6 +508,19 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
             </option>
           ))}
         </select>
+        <select
+          aria-label="Filter by serving day"
+          className="h-10 rounded border border-border bg-white px-3 text-sm"
+          value={filterDay}
+          onChange={(event) => setFilterDay(event.target.value)}
+        >
+          <option value="">Any day</option>
+          {menuWeekdays.map((day) => (
+            <option key={day.value} value={String(day.value)}>
+              {day.label} menu
+            </option>
+          ))}
+        </select>
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
           <input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
           Show retired
@@ -492,11 +528,12 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
       </div>
 
       <div className="mt-3 overflow-x-auto rounded border border-border">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[920px] text-sm">
           <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-3 py-2 font-semibold">Item</th>
               <th className="px-3 py-2 font-semibold">Category</th>
+              <th className="px-3 py-2 font-semibold">Days</th>
               <th className="px-3 py-2 font-semibold">Sold at</th>
               <th className="px-3 py-2 text-right font-semibold">Price (TSh)</th>
               <th className="px-3 py-2 text-right font-semibold">Price (USD)</th>
@@ -507,7 +544,7 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
           <tbody className="divide-y divide-border">
             {visibleProducts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
                   {menu.products.length === 0 ? "The menu is empty. Add your first item above." : "No items match this filter."}
                 </td>
               </tr>
@@ -542,6 +579,9 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
                         </select>
                       </td>
                       <td className="px-3 py-2">
+                        <DayPicker compact selected={editing.menuDays} onChange={(menuDays) => setEdit({ ...editing, menuDays })} />
+                      </td>
+                      <td className="px-3 py-2">
                         <OutletPicker compact outlets={menu.outlets} selected={editing.outletIds} onChange={(outletIds) => setEdit({ ...editing, outletIds })} />
                       </td>
                       <td className="px-3 py-2">
@@ -574,6 +614,11 @@ export function MenuManagementPanel({ canManageTables = false }: { canManageTabl
                       <p className="text-xs text-muted-foreground">{product.sku}</p>
                     </td>
                     <td className="px-3 py-2">{product.category.name}</td>
+                    <td className="px-3 py-2">
+                      <span className={product.menuDays?.length ? "text-xs font-semibold" : "text-xs text-muted-foreground"}>
+                        {describeMenuDays(product.menuDays)}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
                         {outlets.length === 0 ? (
@@ -735,6 +780,38 @@ function OutletPicker({
             }
           />
           {outlet.name}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+// Serving days for day-of-week menus such as the daily buffet. No day selected = every day.
+function DayPicker({
+  selected,
+  onChange,
+  compact = false
+}: {
+  selected: number[];
+  onChange: (menuDays: number[]) => void;
+  compact?: boolean;
+}) {
+  return (
+    <fieldset className={compact ? "grid grid-cols-2 gap-x-2 gap-y-1" : "mt-3 flex flex-wrap gap-3"}>
+      {compact ? null : <legend className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Served on (none = every day)</legend>}
+      {menuWeekdays.map((day) => (
+        <label key={day.value} className="flex items-center gap-1.5 text-sm">
+          <input
+            type="checkbox"
+            aria-label={day.label}
+            checked={selected.includes(day.value)}
+            onChange={(event) =>
+              onChange(
+                event.target.checked ? [...selected, day.value].sort((a, b) => a - b) : selected.filter((value) => value !== day.value)
+              )
+            }
+          />
+          {day.short}
         </label>
       ))}
     </fieldset>

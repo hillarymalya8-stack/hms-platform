@@ -3,10 +3,10 @@ import { ConflictException, ForbiddenException, Injectable } from "@nestjs/commo
 import { ConfigService } from "@nestjs/config";
 import { PosOutletType, Prisma, RoleScope } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { permissions, roleAccessLevels, storeAccess } from "@hms/shared";
+import { normalizeMenuDays, permissions, roleAccessLevels, storeAccess } from "@hms/shared";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { AuthService } from "../auth/auth.service";
-import { defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
+import { dailyBuffetMenu, dailyMenuSku, defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
 import { defaultChartOfAccounts, defaultNumberingRules, defaultStoreTypes } from "./default-setup";
 import { RunSetupDto } from "./dto/run-setup.dto";
 
@@ -242,6 +242,40 @@ export class SetupService {
             categoryId: category.id,
             name,
             sku,
+            variants: {
+              create: {
+                name: "Standard",
+                sku,
+                basePrice: priceTzs,
+                outletProducts: {
+                  create: { outletId: restaurantOutletId, price: priceTzs, priceUsd, available: true }
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+
+    // Daily buffet dishes sold one by one, each shown on the POS only on its days.
+    for (const section of dailyBuffetMenu) {
+      const category = await tx.productCategory.create({
+        data: {
+          propertyId,
+          name: section.category,
+          revenueAccountId: accountIdsByCode.get("4200"),
+          costAccountId: accountIdsByCode.get("5100")
+        }
+      });
+      for (const [index, [name, priceTzs, priceUsd, days]] of section.items.entries()) {
+        const sku = dailyMenuSku(section, index);
+        await tx.product.create({
+          data: {
+            propertyId,
+            categoryId: category.id,
+            name,
+            sku,
+            menuDays: normalizeMenuDays(days),
             variants: {
               create: {
                 name: "Standard",

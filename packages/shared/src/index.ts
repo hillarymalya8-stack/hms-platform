@@ -3,3 +3,4 @@ export * from "./access-levels";
 export * from "./accounting";
 export * from "./system-access";
 export * from "./outlet-access";
+export * from "./menu-days";

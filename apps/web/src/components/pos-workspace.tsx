@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
 import { readSession } from "@/lib/auth";
+import { isServedOnDay } from "@hms/shared";
+import { compareMenuCategories, useMenuWeekday, weekdayLabel } from "@/lib/menu-day";
 
 type PaymentMethod = "CASH" | "CARD" | "MOBILE_MONEY" | "BANK_TRANSFER" | "ROOM_CHARGE";
 type PosOutletType = "RESTAURANT" | "BAR" | "ROOM_SERVICE" | "SPA" | "OTHER";
@@ -34,7 +36,7 @@ type CatalogItem = {
   productVariant: {
     id: string;
     name: string;
-    product: { name: string; category?: { name: string } | null };
+    product: { name: string; menuDays?: number[]; category?: { name: string } | null };
   };
 };
 
@@ -44,6 +46,7 @@ type MenuItem = {
   category: string;
   price: number;
   taxRate: number;
+  menuDays: number[];
 };
 
 type CartLine = { item: MenuItem; quantity: number };
@@ -98,8 +101,20 @@ export function PosWorkspace() {
   const canPay = permissions.includes("pos.orders.pay");
   const selectedOutlet = outlets.find((outlet) => outlet.id === selectedOutletId);
   const selectedTable = selectedOutlet?.tables.find((table) => table.id === selectedTableId);
-  const categories = useMemo(() => ["All", ...Array.from(new Set(menu.map((item) => item.category))).sort()], [menu]);
-  const visibleMenu = activeCategory === "All" ? menu : menu.filter((item) => item.category === activeCategory);
+  const weekday = useMenuWeekday();
+  // Daily buffet dishes only appear on the days they are served.
+  const todaysMenu = useMemo(() => menu.filter((item) => isServedOnDay(item.menuDays, weekday)), [menu, weekday]);
+  const categories = useMemo(
+    () => [
+      "All",
+      ...Array.from(new Set(todaysMenu.map((item) => item.category)))
+        .sort()
+        .sort(compareMenuCategories)
+    ],
+    [todaysMenu]
+  );
+  const servesDailyMenu = todaysMenu.some((item) => item.menuDays.length > 0);
+  const visibleMenu = activeCategory === "All" ? todaysMenu : todaysMenu.filter((item) => item.category === activeCategory);
   const subtotal = cart.reduce((sum, line) => sum + line.item.price * line.quantity, 0);
   const taxTotal = cart.reduce((sum, line) => sum + line.item.price * line.quantity * line.item.taxRate, 0);
   const outletOrders = orders.filter((order) => !selectedOutletId || order.outlet.id === selectedOutletId);
@@ -347,6 +362,15 @@ export function PosWorkspace() {
           </div>
         ) : null}
 
+        {servesDailyMenu ? (
+          <p className="rounded border border-border bg-white px-4 py-2 text-sm">
+            <span className="font-semibold">{weekdayLabel(weekday)} buffet menu.</span>{" "}
+            <span className="text-muted-foreground">
+              Sell &quot;Buffet&quot; for the full buffet, or add single dishes from the Buffet sections at their own prices.
+            </span>
+          </p>
+        ) : null}
+
         {visibleMenu.length === 0 ? (
           <div className="rounded border border-dashed border-border bg-white px-4 py-10 text-center text-sm text-muted-foreground">
             {selectedOutlet ? "No menu items are available at this outlet." : "Choose an outlet to see its menu."}
@@ -571,7 +595,8 @@ function mapCatalogItem(item: CatalogItem): MenuItem {
     name: isDefaultVariant ? productName : `${productName} ${variantName}`,
     category: item.productVariant.product.category?.name ?? "Other",
     price: Number(item.price),
-    taxRate: Number(item.taxRate)
+    taxRate: Number(item.taxRate),
+    menuDays: item.productVariant.product.menuDays ?? []
   };
 }
 

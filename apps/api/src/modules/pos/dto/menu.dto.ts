@@ -1,5 +1,6 @@
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -68,6 +69,15 @@ export class CreatePosProductDto {
   @IsOptional()
   @IsBoolean()
   stockTracked?: boolean;
+  // Weekdays the item is served (0 = Sunday ... 6 = Saturday); empty = every day.
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(7)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  menuDays?: number[];
 }
 
 export class UpdatePosProductDto {
@@ -113,6 +123,15 @@ export class UpdatePosProductDto {
   @ArrayUnique()
   @IsUUID("all", { each: true })
   outletIds?: string[];
+  // Weekdays the item is served (0 = Sunday ... 6 = Saturday); empty = every day.
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(7)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  menuDays?: number[];
 }
 
 export class CreateDiningTableDto {

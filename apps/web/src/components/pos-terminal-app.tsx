@@ -25,6 +25,8 @@ import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
 import { currencyLabel, formatCurrency, saleCurrencies, type SaleCurrency } from "@/lib/currency";
 import { getApiBaseUrl, readSession, saveSession, type LoginResponse } from "@/lib/auth";
+import { isServedOnDay } from "@hms/shared";
+import { compareMenuCategories, useMenuWeekday, weekdayLabel } from "@/lib/menu-day";
 import {
   enqueueOfflineSale,
   onOfflineQueueChanged,
@@ -61,6 +63,8 @@ type TerminalProduct = {
   price: number;
   priceUsd: number | null;
   taxRate: number;
+  // Weekdays the item is served (0 = Sunday); empty or missing = every day.
+  menuDays?: number[];
 };
 
 type TicketLine = {
@@ -120,6 +124,7 @@ type CatalogItem = {
     name: string;
     product: {
       name: string;
+      menuDays?: number[];
       category?: {
         name: string;
       } | null;
@@ -218,8 +223,15 @@ export function PosTerminalApp() {
     () => chargeableRooms.find((room) => room.folio.id === selectedFolioId) ?? null,
     [chargeableRooms, selectedFolioId]
   );
-  const categories = useMemo(() => Array.from(new Set(products.map((product) => product.category))), [products]);
-  const visibleProducts = products.filter((product) => product.category === activeCategory);
+  const weekday = useMenuWeekday();
+  // Daily buffet dishes only appear on the days they are served.
+  const todaysProducts = useMemo(() => products.filter((product) => isServedOnDay(product.menuDays, weekday)), [products, weekday]);
+  const categories = useMemo(
+    () => Array.from(new Set(todaysProducts.map((product) => product.category))).sort(compareMenuCategories),
+    [todaysProducts]
+  );
+  const visibleProducts = todaysProducts.filter((product) => product.category === activeCategory);
+  const servesDailyMenu = todaysProducts.some((product) => (product.menuDays?.length ?? 0) > 0);
   const subtotal = useMemo(
     () => ticket.reduce((sum, line) => sum + (priceIn(line.product, saleCurrency) ?? 0) * line.quantity, 0),
     [ticket, saleCurrency]
@@ -969,6 +981,16 @@ export function PosTerminalApp() {
                 {message}
               </div>
 
+              {servesDailyMenu ? (
+                <div className="rounded border border-[#163f35]/30 bg-[#f8fbf7] px-4 py-3 text-sm">
+                  <span className="font-bold text-[#163f35]">{weekdayLabel(weekday)} buffet menu.</span>{" "}
+                  <span className="text-muted-foreground">
+                    Sell &quot;Buffet&quot; for the full buffet (glass of wine, one soft drink and bottled water included), or add
+                    single dishes from the Buffet sections at their own prices.
+                  </span>
+                </div>
+              ) : null}
+
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 {prepStations.map((station) => {
                   const queueCount =
@@ -1379,7 +1401,8 @@ function mapCatalogItem(item: CatalogItem): TerminalProduct {
     category: item.productVariant.product.category?.name ?? "Food",
     price: Number(item.price),
     priceUsd: item.priceUsd === null || item.priceUsd === undefined ? null : Number(item.priceUsd),
-    taxRate: Number(item.taxRate)
+    taxRate: Number(item.taxRate),
+    menuDays: item.productVariant.product.menuDays ?? []
   };
 }
 

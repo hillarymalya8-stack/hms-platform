@@ -774,6 +774,8 @@ model Product {
   sku          String
   productType  ProductType @default(NON_STOCKED) @map("product_type")
   stockTracked Boolean     @default(false) @map("stock_tracked")
+  // Weekdays the item is served (0 = Sunday ... 6 = Saturday); empty = every day. Used for the daily buffet menu.
+  menuDays     Int[]       @default([]) @map("menu_days")
   active       Boolean     @default(true)
   createdAt    DateTime    @default(now()) @map("created_at")
   updatedAt    DateTime    @updatedAt @map("updated_at")
