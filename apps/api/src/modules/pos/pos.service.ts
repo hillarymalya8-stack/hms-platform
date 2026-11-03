@@ -18,6 +18,8 @@ import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { CreatePosOrderDto } from "./dto/create-pos-order.dto";
 import { PayPosOrderDto } from "./dto/pay-pos-order.dto";
+import { UpdatePosOrderDto } from "./dto/update-pos-order.dto";
+import { VoidPosOrderDto } from "./dto/void-pos-order.dto";
 import { assertPaymentReferencePolicy } from "./pos-payment-policy";
 import { calculatePosOrderTotals } from "./pos-totals";
 
@@ -679,6 +681,316 @@ export class PosService {
     });
   }
 
+  // Corrects the items on an unpaid order. Prices are re-read from the outlet menu in the order's currency.
+  async updateOrder(user: UserContext, orderId: string, dto: UpdatePosOrderDto) {
+    const propertyId = this.requireProperty(user);
+
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.posOrder.findFirst({
+        where: { id: orderId, propertyId },
+        include: { outlet: true, payments: true, items: true }
+      });
+
+      if (!order) {
+        throw new NotFoundException("POS order was not found.");
+      }
+
+      assertOutletAccess(user, order.outlet);
+
+      if (order.status !== PosOrderStatus.OPEN && order.status !== PosOrderStatus.HELD) {
+        throw new ConflictException("Only open orders can be edited. Void a paid order and ring it again instead.");
+      }
+
+      if (order.payments.some((payment) => payment.status === PaymentStatus.COMPLETED)) {
+        throw new ConflictException("This order already has a payment. Void it and ring it again instead of editing.");
+      }
+
+      const variants = dto.items.map((item) => item.productVariantId);
+      const outletProducts = await tx.outletProduct.findMany({
+        where: {
+          outletId: order.outletId,
+          productVariantId: { in: variants },
+          productVariant: { active: true, product: { active: true } }
+        },
+        include: { productVariant: { include: { product: true } } }
+      });
+      const catalogByVariant = new Map(outletProducts.map((item) => [item.productVariantId, item]));
+      const existingVariants = new Set(order.items.map((item) => item.productVariantId));
+      // Items already on the order may stay even if since marked unavailable; new items must be on sale.
+      const missingItem = dto.items.find((item) => {
+        const catalogItem = catalogByVariant.get(item.productVariantId);
+        return !catalogItem || (!catalogItem.available && !existingVariants.has(item.productVariantId));
+      });
+      if (missingItem) {
+        throw new BadRequestException("One or more products are not available in this outlet.");
+      }
+
+      const unitPriceFor = (catalogItem: (typeof outletProducts)[number]) => {
+        if (order.currencyCode !== "USD") return catalogItem.price;
+        if (!catalogItem.priceUsd) {
+          throw new BadRequestException(`${catalogItem.productVariant.product.name} has no USD price. Add one in Menu management.`);
+        }
+        return catalogItem.priceUsd;
+      };
+
+      let totals: ReturnType<typeof calculatePosOrderTotals>;
+      try {
+        totals = calculatePosOrderTotals(
+          dto.items.map((item) => {
+            const catalogItem = catalogByVariant.get(item.productVariantId)!;
+            return {
+              quantity: item.quantity,
+              unitPrice: unitPriceFor(catalogItem).toString(),
+              taxRate: catalogItem.taxRate.toString()
+            };
+          })
+        );
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        throw new BadRequestException((error as Error).message);
+      }
+
+      if (order.outlet.outletType === PosOutletType.BAR) {
+        await this.returnBarStock(tx, propertyId, order, "Bar order edit");
+      }
+
+      await tx.posOrderItem.deleteMany({ where: { orderId: order.id } });
+      const updatedOrder = await tx.posOrder.update({
+        where: { id: order.id },
+        data: {
+          subtotal: totals.subtotal,
+          discountTotal: totals.discountTotal,
+          taxTotal: totals.taxTotal,
+          grandTotal: totals.grandTotal,
+          items: {
+            create: dto.items.map((item, index) => {
+              const catalogItem = catalogByVariant.get(item.productVariantId)!;
+              const itemTotal = totals.itemTotals[index];
+              return {
+                productVariantId: item.productVariantId,
+                quantity: itemTotal.quantity,
+                unitPrice: unitPriceFor(catalogItem),
+                discountAmount: itemTotal.discountAmount,
+                taxAmount: itemTotal.taxAmount,
+                totalAmount: itemTotal.totalAmount
+              };
+            })
+          }
+        },
+        include: orderInclude
+      });
+
+      if (order.outlet.outletType === PosOutletType.BAR) {
+        await this.deductBarStock(tx, propertyId, updatedOrder);
+      }
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: user.organizationId,
+          propertyId,
+          userId: user.userId,
+          module: "pos",
+          action: "edit_order",
+          recordType: "pos_order",
+          recordId: order.id,
+          previousValue: {
+            grandTotal: order.grandTotal.toString(),
+            items: order.items.map((item) => ({ productVariantId: item.productVariantId, quantity: item.quantity.toString() }))
+          },
+          newValue: {
+            grandTotal: updatedOrder.grandTotal.toString(),
+            items: updatedOrder.items.map((item) => ({
+              productVariantId: item.productVariantId,
+              name: item.productVariant.product.name,
+              quantity: item.quantity.toString()
+            }))
+          }
+        }
+      });
+
+      return updatedOrder;
+    });
+  }
+
+  // Voids an order entered by mistake. Payments are voided, room charges are taken back off the guest
+  // folio and bar stock is returned to the Bar Store. Paid orders need the pos.orders.void permission.
+  async voidOrder(user: UserContext, orderId: string, dto: VoidPosOrderDto) {
+    const propertyId = this.requireProperty(user);
+    const reason = dto.reason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException("Give a short reason for voiding this order.");
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.posOrder.findFirst({
+        where: { id: orderId, propertyId },
+        include: { outlet: true, payments: true, items: { include: { productVariant: { include: { product: true } } } } }
+      });
+
+      if (!order) {
+        throw new NotFoundException("POS order was not found.");
+      }
+
+      assertOutletAccess(user, order.outlet);
+
+      if (order.status === PosOrderStatus.VOID) {
+        throw new ConflictException(`${order.orderNumber} is already void.`);
+      }
+
+      if (order.status === PosOrderStatus.REFUNDED) {
+        throw new ConflictException("Refunded orders cannot be voided.");
+      }
+
+      const completedPayments = order.payments.filter((payment) => payment.status === PaymentStatus.COMPLETED);
+      if (completedPayments.length > 0 && !user.permissions.includes("pos.orders.void")) {
+        throw new ForbiddenException("This order is already paid. Ask a supervisor with void permission to void it.");
+      }
+
+      const roomChargeTotal = completedPayments
+        .filter((payment) => payment.paymentMethod === PaymentMethod.ROOM_CHARGE)
+        .reduce((sum, payment) => sum.plus(payment.amount), new Prisma.Decimal(0));
+
+      if (roomChargeTotal.gt(0) && order.folioId) {
+        const folio = await tx.folio.findFirst({ where: { id: order.folioId, propertyId } });
+        if (!folio || folio.status !== FolioStatus.OPEN) {
+          throw new ConflictException("The guest has already checked out, so this room charge can no longer be voided here.");
+        }
+
+        await tx.folioItem.create({
+          data: {
+            folioId: folio.id,
+            itemType: FolioItemType.POS_CHARGE,
+            sourceType: "POS_ORDER_VOID",
+            sourceId: order.id,
+            description: `Void POS order ${order.orderNumber}`,
+            quantity: new Prisma.Decimal(1),
+            unitPrice: roomChargeTotal.negated(),
+            totalAmount: roomChargeTotal.negated()
+          }
+        });
+
+        await tx.folio.update({
+          where: { id: folio.id },
+          data: { balance: { decrement: roomChargeTotal } }
+        });
+      }
+
+      if (completedPayments.length > 0) {
+        await tx.payment.updateMany({
+          where: { id: { in: completedPayments.map((payment) => payment.id) } },
+          data: { status: PaymentStatus.VOID }
+        });
+      }
+
+      if (order.outlet.outletType === PosOutletType.BAR) {
+        await this.returnBarStock(tx, propertyId, order, "Bar order void");
+      }
+
+      const now = new Date();
+      const updatedOrder = await tx.posOrder.update({
+        where: { id: order.id },
+        data: { status: PosOrderStatus.VOID, voidReason: reason, voidedAt: now },
+        include: orderInclude
+      });
+
+      if (order.tableId) {
+        const otherOpenOrders = await tx.posOrder.count({
+          where: {
+            tableId: order.tableId,
+            id: { not: order.id },
+            status: { in: [PosOrderStatus.OPEN, PosOrderStatus.HELD] }
+          }
+        });
+        if (otherOpenOrders === 0) {
+          await tx.diningTable.update({ where: { id: order.tableId }, data: { status: "AVAILABLE" } });
+        }
+      }
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: user.organizationId,
+          propertyId,
+          userId: user.userId,
+          module: "pos",
+          action: "void_order",
+          recordType: "pos_order",
+          recordId: order.id,
+          previousValue: {
+            status: order.status,
+            grandTotal: order.grandTotal.toString()
+          },
+          newValue: {
+            status: PosOrderStatus.VOID,
+            reason,
+            voidedPayments: completedPayments.map((payment) => payment.systemReceiptNumber),
+            roomChargeReversed: roomChargeTotal.toString()
+          }
+        }
+      });
+
+      return updatedOrder;
+    });
+  }
+
+  // Puts back whatever is still issued from the Bar Store for this order (issues minus earlier returns).
+  private async returnBarStock(
+    tx: Prisma.TransactionClient,
+    propertyId: string,
+    order: { id: string; orderNumber: string },
+    label: string
+  ) {
+    const barStore = await tx.inventoryLocation.findFirst({
+      where: { propertyId, code: "BAR", active: true }
+    });
+    if (!barStore) {
+      return;
+    }
+
+    const movements = await tx.inventoryMovement.findMany({
+      where: { propertyId, sourceId: order.id, status: InventoryMovementStatus.POSTED }
+    });
+    const netByItem = new Map<string, { quantity: Prisma.Decimal; unitCost: Prisma.Decimal }>();
+    for (const movement of movements) {
+      const entry = netByItem.get(movement.itemId) ?? { quantity: new Prisma.Decimal(0), unitCost: movement.unitCost };
+      if (movement.movementType === InventoryMovementType.ISSUE && movement.fromLocationId === barStore.id) {
+        entry.quantity = entry.quantity.plus(movement.quantity);
+        entry.unitCost = movement.unitCost;
+      } else if (movement.movementType === InventoryMovementType.ADJUSTMENT && movement.toLocationId === barStore.id) {
+        entry.quantity = entry.quantity.minus(movement.quantity);
+      }
+      netByItem.set(movement.itemId, entry);
+    }
+
+    const now = new Date();
+    const businessDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    for (const [itemId, { quantity, unitCost }] of netByItem) {
+      if (quantity.lte(0)) continue;
+
+      await tx.inventoryBalance.upsert({
+        where: { itemId_locationId: { itemId, locationId: barStore.id } },
+        update: { quantityOnHand: { increment: quantity } },
+        create: { itemId, locationId: barStore.id, quantityOnHand: quantity, averageCost: unitCost }
+      });
+
+      await tx.inventoryMovement.create({
+        data: {
+          propertyId,
+          itemId,
+          toLocationId: barStore.id,
+          movementType: InventoryMovementType.ADJUSTMENT,
+          status: InventoryMovementStatus.POSTED,
+          sourceType: `${label} ${order.orderNumber}`,
+          sourceId: order.id,
+          quantity,
+          unitCost,
+          totalCost: quantity.mul(unitCost),
+          businessDate,
+          postedAt: now
+        }
+      });
+    }
+  }
+
   // Bar sales relieve the Bar Store. Menu items are matched to inventory materials by
   // variant SKU, then product SKU, then name; unmatched items (e.g. cocktails) are skipped.
   private async deductBarStock(
@@ -802,6 +1114,21 @@ export class PosService {
     return user.propertyId;
   }
 }
+
+const orderInclude = {
+  items: {
+    include: {
+      productVariant: {
+        include: {
+          product: true
+        }
+      }
+    }
+  },
+  outlet: true,
+  payments: true,
+  table: true
+} satisfies Prisma.PosOrderInclude;
 
 function money(value: Prisma.Decimal | number | string) {
   return new Prisma.Decimal(value).toFixed(2);

@@ -550,6 +550,9 @@ model Reservation {
   notes             String?
   depositRequired   Decimal           @default(0) @map("deposit_required") @db.Decimal(18, 4)
   depositPaid       Decimal           @default(0) @map("deposit_paid") @db.Decimal(18, 4)
+  // Prepaid bookings: board plan (FULL_BOARD, HALF_BOARD, BED_AND_BREAKFAST) and the company that paid.
+  mealPlan          String?           @map("meal_plan")
+  companyName       String?           @map("company_name")
   checkedInAt       DateTime?         @map("checked_in_at")
   checkedOutAt      DateTime?         @map("checked_out_at")
   createdAt         DateTime          @default(now()) @map("created_at")
@@ -862,6 +865,8 @@ model PosOrder {
   tipTotal           Decimal        @default(0) @map("tip_total") @db.Decimal(18, 4)
   grandTotal         Decimal        @default(0) @map("grand_total") @db.Decimal(18, 4)
   idempotencyKey     String?        @map("idempotency_key")
+  voidReason         String?        @map("void_reason")
+  voidedAt           DateTime?      @map("voided_at")
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
 

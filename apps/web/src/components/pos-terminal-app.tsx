@@ -74,6 +74,11 @@ type TicketLine = {
 
 type PaidReceipt = {
   id: string;
+  // Live sales keep the order so it can be voided (or voided and rung again) if entered by mistake.
+  orderId?: string;
+  orderNumber?: string;
+  ticketLines?: TicketLine[];
+  voided?: boolean;
   receiptNumber: string;
   paymentMethod: PaymentMethod;
   currencyCode: SaleCurrency;
@@ -544,6 +549,44 @@ export function PosTerminalApp() {
     setMessage("Ticket cleared.");
   }
 
+  async function voidReceipt(receipt: PaidReceipt, reRing: boolean) {
+    if (!receipt.orderId || receipt.voided || busy) return;
+    const reason = window.prompt(
+      `Why are you voiding ${receipt.orderNumber ?? receipt.receiptNumber}?`,
+      reRing ? "Wrong items entered" : ""
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      setMessage("Give a short reason for voiding this sale.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<PosOrderResponse>(`/pos/orders/${receipt.orderId}/void`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason.trim() })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setReceipts((current) => current.map((entry) => (entry.id === receipt.id ? { ...entry, voided: true } : entry)));
+    if (isBarOutlet) {
+      void loadBarLowStock();
+    }
+    if (reRing && receipt.ticketLines?.length) {
+      setTicket(receipt.ticketLines);
+      setSaleCurrency(receipt.currencyCode);
+      setPrepSent(true);
+      setMessage(`${receipt.receiptNumber} voided. The items are back on the ticket - correct them and take payment again. Use Send to prep if the kitchen needs the corrected ticket.`);
+      return;
+    }
+    setMessage(`${receipt.receiptNumber} voided. Return any money taken to the guest.`);
+  }
+
   function sendToPrep() {
     if (ticket.length === 0) {
       setMessage("Add items before sending an order.");
@@ -655,6 +698,9 @@ export function PosTerminalApp() {
     setReceipts((current) => [
       {
         id: payment?.id ?? createLocalId("receipt"),
+        orderId: orderResult.data.id,
+        orderNumber: orderResult.data.orderNumber,
+        ticketLines: orderLines,
         receiptNumber,
         paymentMethod,
         currencyCode: orderCurrency,
@@ -1238,11 +1284,40 @@ export function PosTerminalApp() {
                         <p className="mt-1 text-xs text-muted-foreground">
                           {receipt.paymentMethod.replace("_", " ")}
                           {receipt.offline ? ` - ${receipt.syncStatus ?? "PENDING SYNC"}` : ""}
+                          {receipt.voided ? " - VOIDED" : ""}
                         </p>
-                        <Button type="button" variant="secondary" className="mt-2 h-8 w-full" onClick={() => printReceipt(receipt)}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="mt-2 h-8 w-full"
+                          onClick={() => printReceipt(receipt)}
+                          disabled={receipt.voided}
+                        >
                           <Printer className="h-4 w-4" aria-hidden="true" />
                           Print receipt
                         </Button>
+                        {receipt.orderId && !receipt.voided ? (
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="h-8"
+                              disabled={busy}
+                              onClick={() => void voidReceipt(receipt, true)}
+                            >
+                              Void &amp; fix
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="h-8"
+                              disabled={busy}
+                              onClick={() => void voidReceipt(receipt, false)}
+                            >
+                              Void
+                            </Button>
+                          </div>
+                        ) : null}
                       </div>
                     ))
                   )}

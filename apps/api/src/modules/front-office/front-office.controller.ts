@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
 import { CurrentUser } from "../../common/auth/current-user.decorator";
 import { RequirePermissions } from "../../common/auth/require-permissions.decorator";
 import { UserContext } from "../../common/auth/user-context";
+import { CheckInDto } from "./dto/check-in.dto";
 import { CreateGuestDto } from "./dto/create-guest.dto";
 import { CreateReservationDto } from "./dto/create-reservation.dto";
 import { CreateRoomDto } from "./dto/create-room.dto";
@@ -94,8 +95,8 @@ export class FrontOfficeController {
 
   @RequirePermissions("front_office.reservations.check_in")
   @Post("reservations/:reservationId/check-in")
-  checkIn(@CurrentUser() user: UserContext, @Param("reservationId") reservationId: string) {
-    return this.frontOffice.checkIn(user, reservationId);
+  checkIn(@CurrentUser() user: UserContext, @Param("reservationId") reservationId: string, @Body() dto: CheckInDto) {
+    return this.frontOffice.checkIn(user, reservationId, dto ?? {});
   }
 
   @RequirePermissions("front_office.reservations.check_out")
