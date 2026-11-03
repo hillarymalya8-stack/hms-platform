@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { FileText, Printer, RefreshCcw, Search } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
@@ -56,8 +56,16 @@ type InvoiceReservation = {
 
 const chargeTypes = new Set(["ROOM_CHARGE", "POS_CHARGE", "TAX", "OTHER", "TRANSFER"]);
 
-export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
-  const [query, setQuery] = useState("");
+export function InvoiceWorkspace({
+  compact = false,
+  initialQuery = "",
+  initialReservationId
+}: {
+  compact?: boolean;
+  initialQuery?: string;
+  initialReservationId?: string;
+}) {
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<InvoiceReservation[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [mode, setMode] = useState<InvoiceMode>("all");
@@ -73,6 +81,10 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
   const visibleLines = useMemo(() => filterLines(allLines, mode, selectedLineIds), [allLines, mode, selectedLineIds]);
   const total = visibleLines.reduce((sum, line) => sum + Number(line.totalAmount || 0), 0);
 
+  useEffect(() => {
+    if (initialQuery) void searchInvoices();
+  }, []);
+
   async function searchInvoices(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
 
@@ -82,7 +94,9 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
     }
 
     setBusy(true);
-    const result = await apiRequest<InvoiceReservation[]>(`/invoices/reservations?query=${encodeURIComponent(query.trim())}`);
+    const result = await apiRequest<InvoiceReservation[]>(
+      `/invoices/reservations?query=${encodeURIComponent(query.trim())}`
+    );
     setBusy(false);
 
     if (!result.ok) {
@@ -91,12 +105,19 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
     }
 
     setResults(result.data);
-    const first = result.data[0];
+    const first =
+      initialReservationId && query.trim() === initialQuery.trim()
+        ? result.data.find((reservation) => reservation.id === initialReservationId)
+        : result.data[0];
     setSelectedId(first?.id ?? "");
     const nextLines = first ? invoiceLines(first) : [];
     setSelectedLineIds(defaultLineIds(nextLines));
     setMode("all");
-    setMessage(result.data.length ? `${result.data.length} reservation invoice record${result.data.length === 1 ? "" : "s"} found.` : "No matching reservations found.");
+    setMessage(
+      result.data.length
+        ? `${result.data.length} reservation invoice record${result.data.length === 1 ? "" : "s"} found.`
+        : "No matching reservations found."
+    );
   }
 
   function selectReservation(reservation: InvoiceReservation) {
@@ -175,7 +196,7 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
             <h2>Reservation</h2>
             <p>${escapeHtml(selectedReservation.reservationNumber)} - ${escapeHtml(selectedReservation.status)}</p>
             <p>${escapeHtml(formatDate(selectedReservation.arrivalDate))} to ${escapeHtml(formatDate(selectedReservation.departureDate))}</p>
-            <p>${escapeHtml(selectedReservation.room?.roomNumber ? `Room ${selectedReservation.room.roomNumber} - ${selectedReservation.room.roomType}` : selectedReservation.room?.roomType ?? "Room not assigned")}</p>
+            <p>${escapeHtml(selectedReservation.room?.roomNumber ? `Room ${selectedReservation.room.roomNumber} - ${selectedReservation.room.roomType}` : (selectedReservation.room?.roomType ?? "Room not assigned"))}</p>
           </section>
           <table>
             <thead>
@@ -234,13 +255,21 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
           Search
         </Button>
       </form>
-      <p className="mt-3 rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground">{message}</p>
+      <p className="mt-3 rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground">
+        {message}
+      </p>
 
       <div className={compact ? "mt-4 space-y-4" : "mt-4 grid gap-4 xl:grid-cols-[0.85fr_1.15fr]"}>
         <div className="rounded border border-border">
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
             <p className="text-sm font-bold">Matches</p>
-            <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => void searchInvoices()} disabled={busy || query.trim().length < 2}>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-8 px-3"
+              onClick={() => void searchInvoices()}
+              disabled={busy || query.trim().length < 2}
+            >
               <RefreshCcw className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
@@ -261,7 +290,8 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
                 >
                   <p className="font-bold">{guestFullName(reservation.guest)}</p>
                   <p className="text-xs text-muted-foreground">
-                    {reservation.reservationNumber} - {reservation.room?.roomNumber ? `Room ${reservation.room.roomNumber}` : "Room not assigned"}
+                    {reservation.reservationNumber} -{" "}
+                    {reservation.room?.roomNumber ? `Room ${reservation.room.roomNumber}` : "Room not assigned"}
                   </p>
                 </button>
               ))
@@ -296,7 +326,9 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
 
           <div className="rounded border border-border">
             <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <p className="text-sm font-bold">{selectedReservation ? selectedReservation.reservationNumber : "Invoice lines"}</p>
+              <p className="text-sm font-bold">
+                {selectedReservation ? selectedReservation.reservationNumber : "Invoice lines"}
+              </p>
               <span className="text-sm font-bold tabular-nums">{formatMoney(total)}</span>
             </div>
             <div className="max-h-80 overflow-auto divide-y divide-border">
@@ -307,15 +339,12 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
                   const included = visibleLines.some((entry) => entry.id === line.id);
                   return (
                     <label key={line.id} className="flex cursor-pointer items-start gap-3 px-3 py-3 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={included}
-                        onChange={() => toggleLine(line.id)}
-                      />
+                      <input type="checkbox" className="mt-1" checked={included} onChange={() => toggleLine(line.id)} />
                       <span className="min-w-0 flex-1">
                         <span className="block font-semibold">{line.description}</span>
-                        <span className="block text-xs text-muted-foreground">{line.itemType.replaceAll("_", " ").toLowerCase()}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {line.itemType.replaceAll("_", " ").toLowerCase()}
+                        </span>
                       </span>
                       <span className="font-bold tabular-nums">{formatMoney(line.totalAmount)}</span>
                     </label>
@@ -335,8 +364,10 @@ export function InvoiceWorkspace({ compact = false }: { compact?: boolean }) {
   );
 }
 
-const selectedModeClass = "h-10 rounded border border-primary bg-primary px-3 text-sm font-bold text-primary-foreground";
-const unselectedModeClass = "h-10 rounded border border-border bg-background px-3 text-sm font-bold text-muted-foreground hover:bg-muted";
+const selectedModeClass =
+  "h-10 rounded border border-primary bg-primary px-3 text-sm font-bold text-primary-foreground";
+const unselectedModeClass =
+  "h-10 rounded border border-border bg-background px-3 text-sm font-bold text-muted-foreground hover:bg-muted";
 
 function invoiceLines(reservation: InvoiceReservation) {
   const hasRoomCharge = reservation.items.some((item) => item.itemType === "ROOM_CHARGE");

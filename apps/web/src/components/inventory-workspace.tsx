@@ -1,7 +1,18 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRightLeft, ClipboardCheck, ClipboardList, Minus, NotebookPen, PackagePlus, Plus, RefreshCcw, Warehouse } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  ClipboardCheck,
+  ClipboardList,
+  Minus,
+  NotebookPen,
+  PackagePlus,
+  Plus,
+  RefreshCcw,
+  Warehouse
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +88,12 @@ type InventoryWorkspaceResponse = {
 const BAR_RESTOCK_THRESHOLD = 3;
 
 export function InventoryWorkspace() {
+  const [task, setTask] = useState<"stock" | "receive" | "issue" | "transfer" | "usage" | "add" | "history">("stock");
+  const [showCosts, setShowCosts] = useState(false);
+  const [search, setSearch] = useState("");
+  const [storeFilter, setStoreFilter] = useState("");
+  const [usageLoading, setUsageLoading] = useState(false);
+  const usageRequest = useRef(0);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [locations, setLocations] = useState<StoreLocation[]>([]);
   const [transferTargets, setTransferTargets] = useState<StoreLocation[]>([]);
@@ -86,7 +103,9 @@ export function InventoryWorkspace() {
   const [message, setMessage] = useState("Loading saved inventory...");
   const [usageDate, setUsageDate] = useState(todayIso());
   const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([]);
-  const [usageMessage, setUsageMessage] = useState("Note what your outlet used today. This log does not change stock balances.");
+  const [usageMessage, setUsageMessage] = useState(
+    "Note what your outlet used today. This log does not change stock balances."
+  );
   const [usageFilter, setUsageFilter] = useState("ALL");
   const [usageForm, setUsageForm] = useState({
     locationId: "",
@@ -132,7 +151,8 @@ export function InventoryWorkspace() {
   );
 
   const usageLocations = useMemo(() => locations.filter((location) => location.usageAllowed), [locations]);
-  const visibleUsage = usageFilter === "ALL" ? usageRecords : usageRecords.filter((record) => record.locationId === usageFilter);
+  const visibleUsage =
+    usageFilter === "ALL" ? usageRecords : usageRecords.filter((record) => record.locationId === usageFilter);
   const usageTotals = useMemo(
     () =>
       usageLocations.map((location) => {
@@ -146,7 +166,9 @@ export function InventoryWorkspace() {
     [usageLocations, usageRecords]
   );
 
-  const barRestockRows = stockRows.filter((row) => row.location?.type === "BAR" && row.quantity < BAR_RESTOCK_THRESHOLD);
+  const barRestockRows = stockRows.filter(
+    (row) => row.location?.type === "BAR" && row.quantity < BAR_RESTOCK_THRESHOLD
+  );
 
   const inventoryValue = stockRows.reduce((sum, row) => sum + row.value, 0);
   const lowStockCount = stockRows.filter((row) => row.low).length;
@@ -156,22 +178,33 @@ export function InventoryWorkspace() {
   }, []);
 
   useEffect(() => {
-    void loadUsage(usageDate);
-  }, [usageDate]);
+    if (task === "usage") void loadUsage(usageDate);
+    else usageRequest.current++;
+    return () => {
+      usageRequest.current++;
+    };
+  }, [usageDate, task]);
 
   async function loadUsage(date: string) {
+    const request = ++usageRequest.current;
+    setUsageLoading(true);
+    setUsageRecords([]);
     const result = await apiRequest<DailyUsageResponse>(`/inventory/daily-usage?date=${encodeURIComponent(date)}`);
 
+    if (request !== usageRequest.current) return;
+    setUsageLoading(false);
     if (!result.ok) {
       setUsageMessage(result.error);
       return;
     }
 
     setUsageRecords(result.data.records);
+    setUsageMessage("Fill in the section, item, and quantity used. This log does not deduct stock.");
   }
 
   async function recordUsage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy || usageLoading) return;
     const quantity = Number(usageForm.quantity);
     const item = items.find((entry) => entry.id === usageForm.itemId);
     const location = usageLocations.find((entry) => entry.id === usageForm.locationId);
@@ -195,7 +228,9 @@ export function InventoryWorkspace() {
 
     setUsageRecords((current) => [result.data, ...current]);
     setUsageForm((current) => ({ ...current, itemId: "", quantity: "", purpose: "", notes: "" }));
-    setUsageMessage(`Noted ${quantity} ${item.unit} of ${item.name} used by ${sectionLabel(location)}. Stock balances were not changed.`);
+    setUsageMessage(
+      `Noted ${quantity} ${item.unit} of ${item.name} used by ${sectionLabel(location)}. Stock balances were not changed.`
+    );
   }
 
   async function loadData(successMessage = "Inventory loaded with saved stock balances.") {
@@ -225,17 +260,25 @@ export function InventoryWorkspace() {
     setReceiptForm((current) => ({
       ...current,
       itemId: nextItems.some((item) => item.id === current.itemId) ? current.itemId : defaultItemId,
-      locationId: nextLocations.some((location) => location.id === current.locationId) ? current.locationId : defaultLocationId
+      locationId: nextLocations.some((location) => location.id === current.locationId)
+        ? current.locationId
+        : defaultLocationId
     }));
     setUsageForm((current) => ({
       ...current,
-      locationId: nextUsageLocations.some((location) => location.id === current.locationId) ? current.locationId : defaultUsageLocationId
+      locationId: nextUsageLocations.some((location) => location.id === current.locationId)
+        ? current.locationId
+        : defaultUsageLocationId
     }));
     setIssueForm((current) => ({
       ...current,
       itemId: nextItems.some((item) => item.id === current.itemId) ? current.itemId : defaultItemId,
-      sourceLocationId: nextLocations.some((location) => location.id === current.sourceLocationId) ? current.sourceLocationId : defaultLocationId,
-      targetLocationId: nextTargets.some((location) => location.id === current.targetLocationId) ? current.targetLocationId : targetLocationId
+      sourceLocationId: nextLocations.some((location) => location.id === current.sourceLocationId)
+        ? current.sourceLocationId
+        : defaultLocationId,
+      targetLocationId: nextTargets.some((location) => location.id === current.targetLocationId)
+        ? current.targetLocationId
+        : targetLocationId
     }));
     setMessage(
       nextLocations.length === 0
@@ -248,6 +291,7 @@ export function InventoryWorkspace() {
 
   async function createMaterial(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     const sku = materialForm.sku.trim().toUpperCase();
     const name = materialForm.name.trim();
     const unitOfMeasure = materialForm.unitOfMeasure.trim().toUpperCase();
@@ -279,12 +323,21 @@ export function InventoryWorkspace() {
 
   async function receiveStock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     const quantity = Number(receiptForm.quantity);
     const unitCost = Number(receiptForm.unitCost);
     const item = items.find((entry) => entry.id === receiptForm.itemId);
     const location = locations.find((entry) => entry.id === receiptForm.locationId);
 
-    if (!item || !location || quantity <= 0 || unitCost < 0) {
+    if (
+      !item ||
+      !location ||
+      !Number.isFinite(quantity) ||
+      !Number.isFinite(unitCost) ||
+      !receiptForm.unitCost.trim() ||
+      quantity <= 0 ||
+      unitCost < 0
+    ) {
       setMessage("Choose a material, location, quantity, and valid cost before receiving stock.");
       return;
     }
@@ -301,18 +354,24 @@ export function InventoryWorkspace() {
       return;
     }
 
-    await loadData(`${item.name} received into ${location.name}. Inventory value increased by ${formatMoney(quantity * unitCost)}.`);
+    setReceiptForm((current) => ({ ...current, quantity: "", unitCost: "", supplierDoc: "" }));
+    await loadData(
+      `${item.name} received into ${location.name}. Inventory value increased by ${formatMoney(quantity * unitCost)}.`
+    );
   }
 
   async function issueStock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     const quantity = Number(issueForm.quantity);
     const item = items.find((entry) => entry.id === issueForm.itemId);
     const source = locations.find((entry) => entry.id === issueForm.sourceLocationId);
     const target = transferTargets.find((entry) => entry.id === issueForm.targetLocationId);
-    const sourceLine = stock.find((line) => line.itemId === issueForm.itemId && line.locationId === issueForm.sourceLocationId);
+    const sourceLine = stock.find(
+      (line) => line.itemId === issueForm.itemId && line.locationId === issueForm.sourceLocationId
+    );
 
-    if (!item || !source || quantity <= 0 || !sourceLine) {
+    if (!item || !source || !Number.isFinite(quantity) || quantity <= 0 || !sourceLine) {
       setMessage("Choose available stock and a valid quantity before posting movement.");
       return;
     }
@@ -339,6 +398,7 @@ export function InventoryWorkspace() {
       return;
     }
 
+    setIssueForm((current) => ({ ...current, quantity: "" }));
     const isTransfer = issueForm.movementType === "TRANSFER" && target;
     await loadData(
       isTransfer
@@ -347,471 +407,657 @@ export function InventoryWorkspace() {
     );
   }
 
+  const visibleStock = stockRows.filter(
+    (row) =>
+      (!storeFilter || row.locationId === storeFilter) &&
+      (!search.trim() || (row.item?.name + " " + row.item?.sku).toLowerCase().includes(search.trim().toLowerCase()))
+  );
   return (
-    <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="font-bold">Inventory Control Workspace</h3>
-            <p className="text-sm text-muted-foreground">Receive, issue, transfer, and monitor hotel stock balances.</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {locations.map((location) => (
-                <Badge key={location.id} tone="primary">
-                  {location.name}
-                </Badge>
-              ))}
-            </div>
-          </div>
-          <Button type="button" variant="secondary" onClick={() => void loadData()} disabled={busy}>
-            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-            Refresh
-          </Button>
-        </div>
-
-        <p className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground">{message}</p>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Stock value</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(inventoryValue)}</p>
-          </div>
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Tracked items</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{stockRows.length}</p>
-          </div>
-          <div className="rounded border border-border bg-white p-4">
-            <p className="text-sm text-muted-foreground">Reorder alerts</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{lowStockCount}</p>
-          </div>
-        </div>
-
-        {barRestockRows.length > 0 ? (
-          <div role="alert" className="rounded border border-warning/40 bg-warning/10 p-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
-              <h4 className="font-bold">Bar restock needed</h4>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              These Bar Store items are below {BAR_RESTOCK_THRESHOLD} pcs. Transfer stock from the Main Store or receive new stock.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {barRestockRows.map((row) => (
-                <span key={row.itemId} className="rounded border border-warning/40 bg-white px-2 py-1 text-sm font-semibold tabular-nums">
-                  {row.item?.name}: {row.quantity.toFixed(2)} {row.item?.unit} left
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="overflow-hidden rounded border border-border bg-white">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-            <Warehouse className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Stock Ledger</h4>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] border-collapse text-sm">
-              <thead className="bg-muted/70 text-left text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Item</th>
-                  <th className="px-4 py-3 font-semibold">Location</th>
-                  <th className="px-4 py-3 text-right font-semibold">Qty</th>
-                  <th className="px-4 py-3 text-right font-semibold">Avg cost</th>
-                  <th className="px-4 py-3 text-right font-semibold">Value</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stockRows.length === 0 ? (
-                  <tr>
-                    <td className="px-4 py-8 text-muted-foreground" colSpan={6}>
-                      No stock posted yet.
-                    </td>
-                  </tr>
-                ) : (
-                  stockRows.map((line) => (
-                    <tr key={`${line.itemId}-${line.locationId}`} className="border-t border-border">
-                      <td className="px-4 py-3">
-                        <p className="font-semibold">{line.item?.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {line.item?.sku} - {line.item?.category}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3">{line.location?.name}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        {line.quantity.toFixed(2)} {line.item?.unit}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">{formatMoney(line.averageCost)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{formatMoney(line.value)}</td>
-                      <td className="px-4 py-3">
-                        <Badge tone={line.low ? "warning" : "success"}>{line.low ? "Reorder" : "In stock"}</Badge>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div className="overflow-hidden rounded border border-border bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2">
-              <NotebookPen className="h-4 w-4 text-primary" aria-hidden="true" />
-              <div>
-                <h4 className="font-bold">Daily Usage Recorder</h4>
-                <p className="text-xs text-muted-foreground">
-                  Record goods used in your own outlet only. Bar stock is still deducted automatically by POS sales.
-                </p>
-              </div>
-            </div>
-            <Input
-              aria-label="Usage date"
-              type="date"
-              className="w-auto"
-              value={usageDate}
-              max={todayIso()}
-              onChange={(event) => setUsageDate(event.target.value || todayIso())}
-            />
-          </div>
-
-          {usageLocations.length === 0 ? (
-            <p className="border-b border-border p-4 text-sm text-muted-foreground">
-              Goods used are recorded by the Bar and Restaurant outlets. You do not have access to either outlet store.
-            </p>
-          ) : null}
-          <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-2">
-            {usageTotals.map(({ location, entries, value }) => (
-              <div key={location.id} className="rounded border border-border bg-background/70 p-3">
-                <p className="text-sm text-muted-foreground">{sectionLabel(location)}</p>
-                <p className="mt-1 font-bold tabular-nums">{entries} {entries === 1 ? "entry" : "entries"}</p>
-                <p className="text-xs text-muted-foreground tabular-nums">{formatMoney(value)} at average cost</p>
-              </div>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-bold">Inventory</h3>
+          <p className="text-sm text-muted-foreground">Choose a task below. Only the form you need will open.</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {locations.map((location) => (
+              <Badge key={location.id} tone="primary">
+                {location.name}
+              </Badge>
             ))}
           </div>
+        </div>
+        <Button type="button" variant="secondary" onClick={() => void loadData()} disabled={busy}>
+          <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+          Refresh
+        </Button>
+      </div>
 
-          <form onSubmit={recordUsage} className="border-b border-border p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <select
-                aria-label="Usage section"
-                className="h-10 rounded border border-border bg-white px-3 text-sm"
-                value={usageForm.locationId}
-                onChange={(event) => setUsageForm({ ...usageForm, locationId: event.target.value })}
-              >
-                <option value="">Select section</option>
-                {usageLocations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {sectionLabel(location)}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Usage material"
-                className="h-10 rounded border border-border bg-white px-3 text-sm"
-                value={usageForm.itemId}
-                onChange={(event) => setUsageForm({ ...usageForm, itemId: event.target.value })}
-              >
-                <option value="">Select material</option>
-                {items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.unit})
-                  </option>
-                ))}
-              </select>
-              <Input
-                aria-label="Quantity used"
-                inputMode="decimal"
-                value={usageForm.quantity}
-                onChange={(event) => setUsageForm({ ...usageForm, quantity: event.target.value })}
-                placeholder="Quantity used"
-              />
-              <Input
-                aria-label="Usage purpose"
-                value={usageForm.purpose}
-                onChange={(event) => setUsageForm({ ...usageForm, purpose: event.target.value })}
-                placeholder="Used for e.g. lunch service"
-              />
-              <Input
-                aria-label="Usage notes"
-                className="sm:col-span-2 lg:col-span-3"
-                value={usageForm.notes}
-                onChange={(event) => setUsageForm({ ...usageForm, notes: event.target.value })}
-                placeholder="Notes (optional)"
-              />
-              <Button disabled={busy || items.length === 0 || usageLocations.length === 0}>
-                <ClipboardList className="h-4 w-4" aria-hidden="true" />
-                Record usage
-              </Button>
-            </div>
-            <p className="mt-3 text-sm text-muted-foreground">{usageMessage}</p>
-          </form>
+      <p
+        role="status"
+        aria-live="polite"
+        className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground"
+      >
+        {message}
+      </p>
 
-          <div className="flex flex-wrap gap-2 px-4 pt-3">
-            {[{ id: "ALL", label: "All sections" }, ...usageLocations.map((location) => ({ id: location.id, label: sectionLabel(location) }))].map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setUsageFilter(option.id)}
-                className={`rounded border px-3 py-1 text-xs font-semibold ${
-                  usageFilter === option.id ? "border-primary bg-primary text-primary-foreground" : "border-border bg-white text-muted-foreground"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] border-collapse text-sm">
-              <thead className="text-left text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Time</th>
-                  <th className="px-4 py-3 font-semibold">Section</th>
-                  <th className="px-4 py-3 font-semibold">Material</th>
-                  <th className="px-4 py-3 text-right font-semibold">Qty used</th>
-                  <th className="px-4 py-3 font-semibold">Purpose / notes</th>
-                  <th className="px-4 py-3 font-semibold">Recorded by</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleUsage.length === 0 ? (
-                  <tr>
-                    <td className="px-4 py-8 text-muted-foreground" colSpan={6}>
-                      No usage recorded for {usageDate}.
-                    </td>
-                  </tr>
-                ) : (
-                  visibleUsage.map((record) => (
-                    <tr key={record.id} className="border-t border-border">
-                      <td className="px-4 py-3 tabular-nums">
-                        {new Date(record.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </td>
-                      <td className="px-4 py-3">{sectionLabel({ name: record.locationName, type: record.locationType })}</td>
-                      <td className="px-4 py-3 font-semibold">{record.itemName}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        {record.quantity.toFixed(2)} {record.unit}
-                      </td>
-                      <td className="px-4 py-3">
-                        <p>{record.purpose ?? "-"}</p>
-                        {record.notes ? <p className="text-xs text-muted-foreground">{record.notes}</p> : null}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{record.recordedBy ?? "-"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded border border-border bg-white p-4">
+          <p className="text-sm text-muted-foreground">Stock value</p>
+          <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(inventoryValue)}</p>
+        </div>
+        <div className="rounded border border-border bg-white p-4">
+          <p className="text-sm text-muted-foreground">Stock lines</p>
+          <p className="mt-1 text-xl font-bold tabular-nums">{stockRows.length}</p>
+        </div>
+        <div className="rounded border border-border bg-white p-4">
+          <p className="text-sm text-muted-foreground">Items running low</p>
+          <p className="mt-1 text-xl font-bold tabular-nums">{lowStockCount}</p>
         </div>
       </div>
 
-      <div className="space-y-4">
-        <form onSubmit={createMaterial} className="rounded border border-border bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <PackagePlus className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Add New Material</h4>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Input
-              aria-label="Material SKU"
-              value={materialForm.sku}
-              onChange={(event) => setMaterialForm({ ...materialForm, sku: event.target.value })}
-              placeholder="SKU e.g. FOOD-010"
-            />
-            <Input
-              aria-label="Material name"
-              value={materialForm.name}
-              onChange={(event) => setMaterialForm({ ...materialForm, name: event.target.value })}
-              placeholder="Material name"
-            />
-            <Input
-              aria-label="Unit of measure"
-              value={materialForm.unitOfMeasure}
-              onChange={(event) => setMaterialForm({ ...materialForm, unitOfMeasure: event.target.value })}
-              placeholder="Unit e.g. KG, LTR, EA"
-            />
-            <Input
-              aria-label="Reorder level"
-              value={materialForm.reorderLevel}
-              onChange={(event) => setMaterialForm({ ...materialForm, reorderLevel: event.target.value })}
-              placeholder="Reorder level"
-            />
-          </div>
-          <Button className="mt-3" disabled={busy}>
-            <PackagePlus className="h-4 w-4" aria-hidden="true" />
-            Save material
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" role="group" aria-label="Inventory tasks">
+        {(
+          [
+            ["stock", "Check Stock"],
+            ["receive", "Receive Stock"],
+            ["issue", "Issue Stock"],
+            ["transfer", "Transfer Stock"],
+            ["usage", "Daily Usage"],
+            ["add", "Add New Item"],
+            ["history", "Stock History"]
+          ] as const
+        ).map(([key, label]) => (
+          <Button
+            key={key}
+            type="button"
+            disabled={busy}
+            aria-pressed={task === key}
+            variant={task === key ? "primary" : "secondary"}
+            onClick={() => {
+              setTask(key);
+              if (key === "issue" || key === "transfer")
+                setIssueForm((current) => ({ ...current, movementType: key === "transfer" ? "TRANSFER" : "ISSUE" }));
+            }}
+          >
+            {label}
           </Button>
-        </form>
+        ))}
+      </div>
+      {task !== "stock" ? (
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => setTask("stock")}>
+          Close / Back to Stock
+        </Button>
+      ) : null}
+      {task === "stock" ? (
+        <>
+          {barRestockRows.length > 0 ? (
+            <div role="alert" className="rounded border border-warning/40 bg-warning/10 p-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
+                <h4 className="font-bold">Bar restock needed</h4>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                These Bar Store items are below {BAR_RESTOCK_THRESHOLD} pcs. Transfer stock from the Main Store or
+                receive new stock.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {barRestockRows.map((row) => (
+                  <span
+                    key={row.itemId}
+                    className="rounded border border-warning/40 bg-white px-2 py-1 text-sm font-semibold tabular-nums"
+                  >
+                    {row.item?.name}: {row.quantity.toFixed(2)} {row.item?.unit} left
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
-        <form onSubmit={receiveStock} className="rounded border border-border bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <Plus className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Receive Stock</h4>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <select
-              aria-label="Receipt item"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={receiptForm.itemId}
-              onChange={(event) => setReceiptForm({ ...receiptForm, itemId: event.target.value })}
-            >
-              <option value="">Select material</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Receipt location"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={receiptForm.locationId}
-              onChange={(event) => setReceiptForm({ ...receiptForm, locationId: event.target.value })}
-            >
-              <option value="">Select store</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-            <Input
-              aria-label="Receipt quantity"
-              value={receiptForm.quantity}
-              onChange={(event) => setReceiptForm({ ...receiptForm, quantity: event.target.value })}
-              placeholder="Quantity"
-            />
-            <Input
-              aria-label="Receipt unit cost"
-              value={receiptForm.unitCost}
-              onChange={(event) => setReceiptForm({ ...receiptForm, unitCost: event.target.value })}
-              placeholder="Unit cost"
-            />
-            <Input
-              aria-label="Supplier document"
-              className="sm:col-span-2"
-              value={receiptForm.supplierDoc}
-              onChange={(event) => setReceiptForm({ ...receiptForm, supplierDoc: event.target.value })}
-              placeholder="Supplier invoice or GRN"
-            />
-          </div>
-          <Button className="mt-3" disabled={busy || items.length === 0 || locations.length === 0}>
-            <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-            Post receipt
-          </Button>
-        </form>
-
-        <form onSubmit={issueStock} className="rounded border border-border bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <Minus className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Issue or Transfer Stock</h4>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <select
-              aria-label="Movement item"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={issueForm.itemId}
-              onChange={(event) => setIssueForm({ ...issueForm, itemId: event.target.value })}
-            >
-              <option value="">Select material</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Source location"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={issueForm.sourceLocationId}
-              onChange={(event) => setIssueForm({ ...issueForm, sourceLocationId: event.target.value })}
-            >
-              <option value="">Select source store</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Movement type"
-              className="h-10 rounded border border-border bg-white px-3 text-sm"
-              value={issueForm.movementType}
-              onChange={(event) => setIssueForm({ ...issueForm, movementType: event.target.value as "ISSUE" | "TRANSFER" })}
-            >
-              <option value="ISSUE">Issue to department</option>
-              <option value="TRANSFER">Transfer store to store</option>
-            </select>
-            <Input
-              aria-label="Movement quantity"
-              value={issueForm.quantity}
-              onChange={(event) => setIssueForm({ ...issueForm, quantity: event.target.value })}
-              placeholder="Quantity"
-            />
-            {issueForm.movementType === "TRANSFER" ? (
+          <div className="overflow-hidden rounded border border-border bg-white">
+            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+              <Warehouse className="h-4 w-4 text-primary" aria-hidden="true" />
+              <h4 className="font-bold">Stock on hand</h4>
+            </div>
+            <div className="flex flex-wrap gap-3 border-b border-border p-4">
+              <Input
+                aria-label="Find stock item"
+                placeholder="Search item name or code"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
               <select
-                aria-label="Target location"
-                className="h-10 rounded border border-border bg-white px-3 text-sm sm:col-span-2"
-                value={issueForm.targetLocationId}
-                onChange={(event) => setIssueForm({ ...issueForm, targetLocationId: event.target.value })}
+                aria-label="Filter stock by store"
+                className="h-10 rounded border border-border bg-white px-3 text-sm"
+                value={storeFilter}
+                onChange={(event) => setStoreFilter(event.target.value)}
               >
-                <option value="">Select target store</option>
-                {transferTargets.filter((location) => location.id !== issueForm.sourceLocationId).map((location) => (
+                <option value="">All stores</option>
+                {locations.map((location) => (
                   <option key={location.id} value={location.id}>
                     {location.name}
                   </option>
                 ))}
               </select>
-            ) : (
-              <Input
-                aria-label="Issue destination"
-                className="sm:col-span-2"
-                value={issueForm.destination}
-                onChange={(event) => setIssueForm({ ...issueForm, destination: event.target.value })}
-                placeholder="Destination department"
-              />
-            )}
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={showCosts} onChange={(event) => setShowCosts(event.target.checked)} />
+                Show stock costs
+              </label>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[680px] border-collapse text-sm">
+                <thead className="bg-muted/70 text-left text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Item</th>
+                    <th className="px-4 py-3 font-semibold">Location</th>
+                    <th className="px-4 py-3 text-right font-semibold">Qty</th>
+                    {showCosts ? <th className="px-4 py-3 text-right font-semibold">Cost per unit</th> : null}
+                    {showCosts ? <th className="px-4 py-3 text-right font-semibold">Value</th> : null}
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleStock.length === 0 ? (
+                    <tr>
+                      <td className="px-4 py-8 text-muted-foreground" colSpan={showCosts ? 6 : 4}>
+                        No stock matches this search or store.
+                      </td>
+                    </tr>
+                  ) : (
+                    visibleStock.map((line) => (
+                      <tr key={`${line.itemId}-${line.locationId}`} className="border-t border-border">
+                        <td className="px-4 py-3">
+                          <p className="font-semibold">{line.item?.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {line.item?.sku} - {line.item?.category}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3">{line.location?.name}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {line.quantity.toFixed(2)} {line.item?.unit}
+                        </td>
+                        {showCosts ? (
+                          <td className="px-4 py-3 text-right tabular-nums">{formatMoney(line.averageCost)}</td>
+                        ) : null}
+                        {showCosts ? (
+                          <td className="px-4 py-3 text-right tabular-nums">{formatMoney(line.value)}</td>
+                        ) : null}
+                        <td className="px-4 py-3">
+                          <Badge tone={line.low ? "warning" : "success"}>{line.low ? "Reorder" : "In stock"}</Badge>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <Button className="mt-3" disabled={busy || stock.length === 0}>
-            <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
-            Post movement
-          </Button>
-        </form>
-
-        <div className="rounded border border-border bg-white">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-            <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
-            <h4 className="font-bold">Movement Audit</h4>
-          </div>
-          <div className="divide-y divide-border">
-            {movements.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-muted-foreground">No inventory movements posted yet.</div>
-            ) : (
-              movements.slice(0, 5).map((movement) => (
-                <div key={movement.id} className="px-4 py-3 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-bold">{movement.reference}</p>
-                      <p className="text-muted-foreground">
-                        {movement.itemName} - {movement.locationName}
-                      </p>
-                    </div>
-                    <Badge tone={movement.type === "RECEIPT" ? "success" : movement.type === "TRANSFER" ? "primary" : "warning"}>
-                      {movement.type}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 tabular-nums">
-                    {movement.quantity.toFixed(2)} units - {formatMoney(movement.value)}
+        </>
+      ) : null}
+      {task === "usage" ? (
+        <>
+          <div className="overflow-hidden rounded border border-border bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <NotebookPen className="h-4 w-4 text-primary" aria-hidden="true" />
+                <div>
+                  <h4 className="font-bold">Daily Usage</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Fill in what your section used. This log does not deduct stock. Bar sales still deduct stock
+                    automatically.
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">{movement.posting}</p>
                 </div>
-              ))
-            )}
+              </div>
+              <label className="grid gap-1 text-sm ">
+                <span>Date</span>
+                <Input
+                  disabled={busy}
+                  aria-label="Usage date"
+                  type="date"
+                  className="w-auto"
+                  value={usageDate}
+                  max={todayIso()}
+                  onChange={(event) => setUsageDate(event.target.value || todayIso())}
+                />
+              </label>
+            </div>
+
+            {usageLocations.length === 0 ? (
+              <p className="border-b border-border p-4 text-sm text-muted-foreground">
+                Goods used are recorded by the Bar and Restaurant outlets. You do not have access to either outlet
+                store.
+              </p>
+            ) : null}
+            <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-2">
+              {usageTotals.map(({ location, entries, value }) => (
+                <div key={location.id} className="rounded border border-border bg-background/70 p-3">
+                  <p className="text-sm text-muted-foreground">{sectionLabel(location)}</p>
+                  <p className="mt-1 font-bold tabular-nums">
+                    {entries} {entries === 1 ? "entry" : "entries"}
+                  </p>
+                  <p className="text-xs text-muted-foreground tabular-nums">{formatMoney(value)} at average cost</p>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={recordUsage} className="border-b border-border p-4">
+              <fieldset disabled={busy || usageLoading} className="min-w-0">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <label className="grid gap-1 text-sm ">
+                    <span>Your section</span>
+                    <select
+                      aria-label="Usage section"
+                      className="h-10 rounded border border-border bg-white px-3 text-sm"
+                      value={usageForm.locationId}
+                      onChange={(event) => setUsageForm({ ...usageForm, locationId: event.target.value })}
+                    >
+                      <option value="">Select section</option>
+                      {usageLocations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {sectionLabel(location)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-sm ">
+                    <span>Item used</span>
+                    <select
+                      aria-label="Usage material"
+                      className="h-10 rounded border border-border bg-white px-3 text-sm"
+                      value={usageForm.itemId}
+                      onChange={(event) => setUsageForm({ ...usageForm, itemId: event.target.value })}
+                    >
+                      <option value="">Select material</option>
+                      {items.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.unit})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-sm ">
+                    <span>Quantity used</span>
+                    <Input
+                      aria-label="Quantity used"
+                      inputMode="decimal"
+                      value={usageForm.quantity}
+                      onChange={(event) => setUsageForm({ ...usageForm, quantity: event.target.value })}
+                      placeholder="Quantity used"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-sm ">
+                    <span>Used for (optional)</span>
+                    <Input
+                      aria-label="Usage purpose"
+                      value={usageForm.purpose}
+                      onChange={(event) => setUsageForm({ ...usageForm, purpose: event.target.value })}
+                      placeholder="Used for e.g. lunch service"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-sm sm:col-span-2 lg:col-span-3">
+                    <span>Notes (optional)</span>
+                    <Input
+                      aria-label="Usage notes"
+                      className="sm:col-span-2 lg:col-span-3"
+                      value={usageForm.notes}
+                      onChange={(event) => setUsageForm({ ...usageForm, notes: event.target.value })}
+                      placeholder="Notes (optional)"
+                    />
+                  </label>
+                  <Button disabled={busy || usageLoading || items.length === 0 || usageLocations.length === 0}>
+                    <ClipboardList className="h-4 w-4" aria-hidden="true" />
+                    Save daily usage
+                  </Button>
+                </div>
+                <p role="status" aria-live="polite" className="mt-3 text-sm text-muted-foreground">
+                  {usageLoading ? "Loading usage for this date…" : usageMessage}
+                </p>
+              </fieldset>
+            </form>
+
+            <div className="flex flex-wrap gap-2 px-4 pt-3">
+              {[
+                { id: "ALL", label: "All sections" },
+                ...usageLocations.map((location) => ({ id: location.id, label: sectionLabel(location) }))
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setUsageFilter(option.id)}
+                  className={`rounded border px-3 py-1 text-xs font-semibold ${
+                    usageFilter === option.id
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-white text-muted-foreground"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[680px] border-collapse text-sm">
+                <thead className="text-left text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Time</th>
+                    <th className="px-4 py-3 font-semibold">Section</th>
+                    <th className="px-4 py-3 font-semibold">Material</th>
+                    <th className="px-4 py-3 text-right font-semibold">Qty used</th>
+                    <th className="px-4 py-3 font-semibold">Purpose / notes</th>
+                    <th className="px-4 py-3 font-semibold">Recorded by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleUsage.length === 0 ? (
+                    <tr>
+                      <td className="px-4 py-8 text-muted-foreground" colSpan={6}>
+                        No usage recorded for {usageDate}.
+                      </td>
+                    </tr>
+                  ) : (
+                    visibleUsage.map((record) => (
+                      <tr key={record.id} className="border-t border-border">
+                        <td className="px-4 py-3 tabular-nums">
+                          {new Date(record.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-3">
+                          {sectionLabel({ name: record.locationName, type: record.locationType })}
+                        </td>
+                        <td className="px-4 py-3 font-semibold">{record.itemName}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {record.quantity.toFixed(2)} {record.unit}
+                        </td>
+                        <td className="px-4 py-3">
+                          <p>{record.purpose ?? "-"}</p>
+                          {record.notes ? <p className="text-xs text-muted-foreground">{record.notes}</p> : null}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">{record.recordedBy ?? "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      ) : null}
+      {task === "add" ? (
+        <>
+          <form onSubmit={createMaterial} className="rounded border border-border bg-white p-4">
+            <fieldset disabled={busy} className="min-w-0">
+              <div className="mb-3 flex items-center gap-2">
+                <PackagePlus className="h-4 w-4 text-primary" aria-hidden="true" />
+                <h4 className="font-bold">Add New Item</h4>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm ">
+                  <span>Item code</span>
+                  <Input
+                    aria-label="Material SKU"
+                    value={materialForm.sku}
+                    onChange={(event) => setMaterialForm({ ...materialForm, sku: event.target.value })}
+                    placeholder="SKU e.g. FOOD-010"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Item name</span>
+                  <Input
+                    aria-label="Material name"
+                    value={materialForm.name}
+                    onChange={(event) => setMaterialForm({ ...materialForm, name: event.target.value })}
+                    placeholder="Material name"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Unit (e.g. KG, LTR, EA)</span>
+                  <Input
+                    aria-label="Unit of measure"
+                    value={materialForm.unitOfMeasure}
+                    onChange={(event) => setMaterialForm({ ...materialForm, unitOfMeasure: event.target.value })}
+                    placeholder="Unit e.g. KG, LTR, EA"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Alert when stock reaches</span>
+                  <Input
+                    aria-label="Reorder level"
+                    value={materialForm.reorderLevel}
+                    onChange={(event) => setMaterialForm({ ...materialForm, reorderLevel: event.target.value })}
+                    placeholder="Reorder level"
+                  />
+                </label>
+              </div>
+              <Button className="mt-3" disabled={busy}>
+                <PackagePlus className="h-4 w-4" aria-hidden="true" />
+                Save item
+              </Button>
+            </fieldset>
+          </form>
+        </>
+      ) : null}
+      {task === "receive" ? (
+        <>
+          <form onSubmit={receiveStock} className="rounded border border-border bg-white p-4">
+            <fieldset disabled={busy} className="min-w-0">
+              <div className="mb-3 flex items-center gap-2">
+                <Plus className="h-4 w-4 text-primary" aria-hidden="true" />
+                <h4 className="font-bold">Receive Stock</h4>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm ">
+                  <span>Item received</span>
+                  <select
+                    aria-label="Receipt item"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={receiptForm.itemId}
+                    onChange={(event) => setReceiptForm({ ...receiptForm, itemId: event.target.value })}
+                  >
+                    <option value="">Select material</option>
+                    {items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Receive into store</span>
+                  <select
+                    aria-label="Receipt location"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={receiptForm.locationId}
+                    onChange={(event) => setReceiptForm({ ...receiptForm, locationId: event.target.value })}
+                  >
+                    <option value="">Select store</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Quantity received</span>
+                  <Input
+                    aria-label="Receipt quantity"
+                    value={receiptForm.quantity}
+                    onChange={(event) => setReceiptForm({ ...receiptForm, quantity: event.target.value })}
+                    placeholder="Quantity"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Cost for one unit</span>
+                  <Input
+                    aria-label="Receipt unit cost"
+                    value={receiptForm.unitCost}
+                    onChange={(event) => setReceiptForm({ ...receiptForm, unitCost: event.target.value })}
+                    placeholder="Unit cost"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm sm:col-span-2">
+                  <span>Supplier receipt / delivery note (optional)</span>
+                  <Input
+                    aria-label="Supplier document"
+                    className="sm:col-span-2"
+                    value={receiptForm.supplierDoc}
+                    onChange={(event) => setReceiptForm({ ...receiptForm, supplierDoc: event.target.value })}
+                    placeholder="Supplier receipt or delivery note (optional)"
+                  />
+                </label>
+              </div>
+              <Button className="mt-3" disabled={busy || items.length === 0 || locations.length === 0}>
+                <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+                Save received stock
+              </Button>
+            </fieldset>
+          </form>
+        </>
+      ) : null}
+      {task === "issue" || task === "transfer" ? (
+        <>
+          <form onSubmit={issueStock} className="rounded border border-border bg-white p-4">
+            <fieldset disabled={busy} className="min-w-0">
+              <div className="mb-3 flex items-center gap-2">
+                <Minus className="h-4 w-4 text-primary" aria-hidden="true" />
+                <h4 className="font-bold">
+                  {task === "transfer" ? "Move Stock Between Stores" : "Issue Stock for Use"}
+                </h4>
+              </div>
+              <p className="mb-3 text-sm text-muted-foreground">
+                {task === "transfer"
+                  ? "Move items from one store to another. The hotel total stays the same."
+                  : "Take stock out for department use. This reduces the source store balance."}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm ">
+                  <span>Item</span>
+                  <select
+                    aria-label="Movement item"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={issueForm.itemId}
+                    onChange={(event) => setIssueForm({ ...issueForm, itemId: event.target.value })}
+                  >
+                    <option value="">Select material</option>
+                    {items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Take from store</span>
+                  <select
+                    aria-label="Source location"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={issueForm.sourceLocationId}
+                    onChange={(event) => setIssueForm({ ...issueForm, sourceLocationId: event.target.value })}
+                  >
+                    <option value="">Select source store</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-sm ">
+                  <span>Quantity</span>
+                  <Input
+                    aria-label="Movement quantity"
+                    value={issueForm.quantity}
+                    onChange={(event) => setIssueForm({ ...issueForm, quantity: event.target.value })}
+                    placeholder="Quantity"
+                  />
+                </label>
+                {issueForm.movementType === "TRANSFER" ? (
+                  <label className="grid gap-1 text-sm h-10 rounded border border-border bg-white px-3 text-sm sm:col-span-2">
+                    <span>Move to store</span>
+                    <select
+                      aria-label="Target location"
+                      className="h-10 rounded border border-border bg-white px-3 text-sm sm:col-span-2"
+                      value={issueForm.targetLocationId}
+                      onChange={(event) => setIssueForm({ ...issueForm, targetLocationId: event.target.value })}
+                    >
+                      <option value="">Select target store</option>
+                      {transferTargets
+                        .filter((location) => location.id !== issueForm.sourceLocationId)
+                        .map((location) => (
+                          <option key={location.id} value={location.id}>
+                            {location.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="grid gap-1 text-sm sm:col-span-2">
+                    <span>Department or purpose</span>
+                    <Input
+                      aria-label="Issue destination"
+                      className="sm:col-span-2"
+                      value={issueForm.destination}
+                      onChange={(event) => setIssueForm({ ...issueForm, destination: event.target.value })}
+                      placeholder="Destination department"
+                    />
+                  </label>
+                )}
+              </div>
+              <Button className="mt-3" disabled={busy || stock.length === 0}>
+                <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
+                {task === "transfer" ? "Save transfer" : "Save stock issue"}
+              </Button>
+            </fieldset>
+          </form>
+        </>
+      ) : null}
+      {task === "history" ? (
+        <>
+          <div className="rounded border border-border bg-white">
+            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+              <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
+              <h4 className="font-bold">Stock History</h4>
+              <span className="text-xs text-muted-foreground">Latest 5 movements</span>
+            </div>
+            <div className="divide-y divide-border">
+              {movements.length === 0 ? (
+                <div className="px-4 py-8 text-sm text-muted-foreground">No inventory movements posted yet.</div>
+              ) : (
+                movements.slice(0, 5).map((movement) => (
+                  <div key={movement.id} className="px-4 py-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold">{movement.reference}</p>
+                        <p className="text-muted-foreground">
+                          {movement.itemName} - {movement.locationName}
+                        </p>
+                      </div>
+                      <Badge
+                        tone={
+                          movement.type === "RECEIPT" ? "success" : movement.type === "TRANSFER" ? "primary" : "warning"
+                        }
+                      >
+                        {movement.type}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 tabular-nums">
+                      {movement.quantity.toFixed(2)} units - {formatMoney(movement.value)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {movement.type === "RECEIPT"
+                        ? "Stock received"
+                        : movement.type === "TRANSFER"
+                          ? "Stock moved between stores"
+                          : "Stock issued for use"}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
-
 function sectionLabel(location: { name: string; type: string }) {
   if (location.type === "KITCHEN") return "Restaurant";
   if (location.type === "BAR") return "Bar";

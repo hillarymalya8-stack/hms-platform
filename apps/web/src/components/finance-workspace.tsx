@@ -20,6 +20,7 @@ import { InvoiceWorkspace } from "@/components/invoice-workspace";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api-client";
 import { readSession } from "@/lib/auth";
+import { SimpleFinanceWorkspace } from "@/components/simple-finance-workspace";
 
 type AccountType = "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "COST_OF_SALES" | "EXPENSE";
 
@@ -107,6 +108,38 @@ type JournalFilter = "DRAFT" | "POSTED" | "ALL";
 const amountPattern = /^\d+(\.\d{1,4})?$/;
 
 export function FinanceWorkspace() {
+  const [advanced, setAdvanced] = useState(false);
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Finance view">
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={!advanced}
+          variant={advanced ? "secondary" : "primary"}
+          onClick={() => setAdvanced(false)}
+        >
+          Everyday finance
+        </Button>
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={advanced}
+          variant={advanced ? "primary" : "secondary"}
+          onClick={() => setAdvanced(true)}
+        >
+          Advanced accounting
+        </Button>
+      </div>
+      <div hidden={advanced}>
+        <SimpleFinanceWorkspace active={!advanced} />
+      </div>
+      {advanced ? <AdvancedFinanceWorkspace /> : null}
+    </div>
+  );
+}
+
+function AdvancedFinanceWorkspace() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [journals, setJournals] = useState<Journal[]>([]);
@@ -195,7 +228,9 @@ export function FinanceWorkspace() {
     const rows = trialBalance?.rows ?? [];
     const net = (row: TrialBalanceRow) => Number(row.totalDebit) - Number(row.totalCredit);
     const sumBy = (types: AccountType[], sign: 1 | -1) =>
-      rows.filter((row) => row.accountType && types.includes(row.accountType)).reduce((sum, row) => sum + sign * net(row), 0);
+      rows
+        .filter((row) => row.accountType && types.includes(row.accountType))
+        .reduce((sum, row) => sum + sign * net(row), 0);
 
     const revenue = sumBy(["REVENUE"], -1);
     const costOfSales = sumBy(["COST_OF_SALES"], 1);
@@ -263,9 +298,7 @@ export function FinanceWorkspace() {
       return;
     }
 
-    setAccounts((current) =>
-      [...current, result.data].sort((a, b) => a.accountCode.localeCompare(b.accountCode))
-    );
+    setAccounts((current) => [...current, result.data].sort((a, b) => a.accountCode.localeCompare(b.accountCode)));
     setAccountForm({ accountCode: "", accountName: "", accountType: accountForm.accountType, isControlAccount: false });
     setMessage(`Account ${result.data.accountCode} ${result.data.accountName} added.`);
   }
@@ -276,7 +309,9 @@ export function FinanceWorkspace() {
 
   async function createJournal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const lines = journalLines.filter((line) => line.accountCode || line.debitAmount.trim() || line.creditAmount.trim());
+    const lines = journalLines.filter(
+      (line) => line.accountCode || line.debitAmount.trim() || line.creditAmount.trim()
+    );
 
     if (lines.length < 2) {
       setMessage("A journal needs at least two lines.");
@@ -293,7 +328,7 @@ export function FinanceWorkspace() {
         setMessage(`Line ${index + 1} has an invalid amount. Use numbers like 125.50.`);
         return;
       }
-      if ((Number(debit || 0) > 0) === (Number(credit || 0) > 0)) {
+      if (Number(debit || 0) > 0 === Number(credit || 0) > 0) {
         setMessage(`Line ${index + 1} must have either a debit or a credit amount.`);
         return;
       }
@@ -361,7 +396,9 @@ export function FinanceWorkspace() {
     }
     await loadBusinessDate();
     setBusy(false);
-    setMessage(`${formatDate(result.data.closed.businessDate)} closed. Business date is now ${formatDate(result.data.current.businessDate)}.`);
+    setMessage(
+      `${formatDate(result.data.closed.businessDate)} closed. Business date is now ${formatDate(result.data.current.businessDate)}.`
+    );
   }
 
   const tbRows = trialBalance?.rows ?? [];
@@ -372,7 +409,9 @@ export function FinanceWorkspace() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="font-bold">Finance Close Workspace</h3>
-            <p className="text-sm text-muted-foreground">Post journals, review the ledger, and close the business date.</p>
+            <p className="text-sm text-muted-foreground">
+              Post journals, review the ledger, and close the business date.
+            </p>
           </div>
           <Button
             type="button"
@@ -385,7 +424,10 @@ export function FinanceWorkspace() {
           </Button>
         </div>
 
-        <p className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground" role="status">
+        <p
+          className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground"
+          role="status"
+        >
           {message}
         </p>
 
@@ -411,11 +453,19 @@ export function FinanceWorkspace() {
           <form onSubmit={applyRange} className="flex flex-wrap items-end gap-2 border-b border-border px-4 py-3">
             <label className="grid gap-1 text-xs text-muted-foreground">
               Posted from
-              <Input type="date" value={range.from} onChange={(event) => setRange({ ...range, from: event.target.value })} />
+              <Input
+                type="date"
+                value={range.from}
+                onChange={(event) => setRange({ ...range, from: event.target.value })}
+              />
             </label>
             <label className="grid gap-1 text-xs text-muted-foreground">
               Posted to
-              <Input type="date" value={range.to} onChange={(event) => setRange({ ...range, to: event.target.value })} />
+              <Input
+                type="date"
+                value={range.to}
+                onChange={(event) => setRange({ ...range, to: event.target.value })}
+              />
             </label>
             <Button type="submit" variant="secondary" disabled={busy}>
               Apply
@@ -447,7 +497,9 @@ export function FinanceWorkspace() {
                 {tbRows.length === 0 ? (
                   <tr>
                     <td className="px-4 py-8 text-muted-foreground" colSpan={4}>
-                      {loading ? "Loading trial balance..." : "No posted journals yet. Posted activity will appear here."}
+                      {loading
+                        ? "Loading trial balance..."
+                        : "No posted journals yet. Posted activity will appear here."}
                     </td>
                   </tr>
                 ) : (
@@ -522,17 +574,25 @@ export function FinanceWorkspace() {
                     <div className="min-w-0">
                       <p className="font-bold">
                         {journal.entryNumber}
-                        {journal.sourceNumber ? <span className="font-normal text-muted-foreground"> / {journal.sourceNumber}</span> : null}
+                        {journal.sourceNumber ? (
+                          <span className="font-normal text-muted-foreground"> / {journal.sourceNumber}</span>
+                        ) : null}
                       </p>
                       <p className="text-muted-foreground">
-                        {journal.description ?? sourceLabel(journal.sourceType)} - {formatDateTime(journal.postedAt ?? journal.createdAt)}
+                        {journal.description ?? sourceLabel(journal.sourceType)} -{" "}
+                        {formatDateTime(journal.postedAt ?? journal.createdAt)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-semibold tabular-nums">{formatMoney(Number(journal.totalDebit))}</span>
                       <Badge tone={journalTone(journal.status)}>{journal.status}</Badge>
                       {journal.status === "DRAFT" && can("accounting.journals.post") ? (
-                        <Button type="button" className="h-8 px-3" disabled={busy} onClick={() => void postJournal(journal)}>
+                        <Button
+                          type="button"
+                          className="h-8 px-3"
+                          disabled={busy}
+                          onClick={() => void postJournal(journal)}
+                        >
                           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                           Post
                         </Button>
@@ -581,11 +641,14 @@ export function FinanceWorkspace() {
                     {businessDate.current.openedBy ? ` by ${businessDate.current.openedBy}` : ""}
                   </p>
                 </div>
-                <Badge tone={businessDate.current.status === "CLOSED" ? "success" : "warning"}>{businessDate.current.status}</Badge>
+                <Badge tone={businessDate.current.status === "CLOSED" ? "success" : "warning"}>
+                  {businessDate.current.status}
+                </Badge>
               </div>
               {businessDate.draftJournalCount > 0 ? (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  {businessDate.draftJournalCount} draft journal{businessDate.draftJournalCount === 1 ? "" : "s"} must be posted before closing.
+                  {businessDate.draftJournalCount} draft journal{businessDate.draftJournalCount === 1 ? "" : "s"} must
+                  be posted before closing.
                 </p>
               ) : null}
               {can("accounting.journals.post") ? (
@@ -620,7 +683,9 @@ export function FinanceWorkspace() {
               ) : null}
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">{loading ? "Loading business date..." : businessDateError || "No business date available."}</p>
+            <p className="text-sm text-muted-foreground">
+              {loading ? "Loading business date..." : businessDateError || "No business date available."}
+            </p>
           )}
         </div>
 
@@ -631,7 +696,9 @@ export function FinanceWorkspace() {
               <h4 className="font-bold">Manual Journal</h4>
             </div>
             {accounts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Add accounts to the chart of accounts before creating journals.</p>
+              <p className="text-sm text-muted-foreground">
+                Add accounts to the chart of accounts before creating journals.
+              </p>
             ) : (
               <>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -672,14 +739,24 @@ export function FinanceWorkspace() {
                         aria-label={`Line ${index + 1} debit`}
                         inputMode="decimal"
                         value={line.debitAmount}
-                        onChange={(event) => updateLine(line.key, { debitAmount: event.target.value, creditAmount: event.target.value ? "" : line.creditAmount })}
+                        onChange={(event) =>
+                          updateLine(line.key, {
+                            debitAmount: event.target.value,
+                            creditAmount: event.target.value ? "" : line.creditAmount
+                          })
+                        }
                         placeholder="Debit"
                       />
                       <Input
                         aria-label={`Line ${index + 1} credit`}
                         inputMode="decimal"
                         value={line.creditAmount}
-                        onChange={(event) => updateLine(line.key, { creditAmount: event.target.value, debitAmount: event.target.value ? "" : line.debitAmount })}
+                        onChange={(event) =>
+                          updateLine(line.key, {
+                            creditAmount: event.target.value,
+                            debitAmount: event.target.value ? "" : line.debitAmount
+                          })
+                        }
                         placeholder="Credit"
                       />
                       <Button
@@ -696,7 +773,11 @@ export function FinanceWorkspace() {
                   ))}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <Button type="button" variant="secondary" onClick={() => setJournalLines((current) => [...current, newFormLine()])}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setJournalLines((current) => [...current, newFormLine()])}
+                  >
                     <Plus className="h-4 w-4" aria-hidden="true" />
                     Add line
                   </Button>
@@ -737,10 +818,18 @@ export function FinanceWorkspace() {
               ) : (
                 <>
                   {summary.revenueRows.map((row) => (
-                    <Row key={row.accountId} label={row.accountName} value={Number(row.totalCredit) - Number(row.totalDebit)} />
+                    <Row
+                      key={row.accountId}
+                      label={row.accountName}
+                      value={Number(row.totalCredit) - Number(row.totalDebit)}
+                    />
                   ))}
                   {summary.expenseRows.map((row) => (
-                    <Row key={row.accountId} label={row.accountName} value={-(Number(row.totalDebit) - Number(row.totalCredit))} />
+                    <Row
+                      key={row.accountId}
+                      label={row.accountName}
+                      value={-(Number(row.totalDebit) - Number(row.totalCredit))}
+                    />
                   ))}
                   <Row label="Net profit" value={summary.netProfit} strong />
                 </>
@@ -834,7 +923,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function Row({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
   return (
-    <div className={strong ? "flex justify-between gap-3 border-t border-border pt-2 font-bold" : "flex justify-between gap-3"}>
+    <div
+      className={
+        strong ? "flex justify-between gap-3 border-t border-border pt-2 font-bold" : "flex justify-between gap-3"
+      }
+    >
       <span className="truncate text-muted-foreground">{label}</span>
       <span className="tabular-nums">{formatMoney(value)}</span>
     </div>
@@ -842,7 +935,12 @@ function Row({ label, value, strong = false }: { label: string; value: number; s
 }
 
 function newFormLine(): JournalFormLine {
-  return { key: `line-${Date.now()}-${Math.random().toString(16).slice(2)}`, accountCode: "", debitAmount: "", creditAmount: "" };
+  return {
+    key: `line-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    accountCode: "",
+    debitAmount: "",
+    creditAmount: ""
+  };
 }
 
 function accountTypeLabel(type: AccountType) {
@@ -871,5 +969,7 @@ function formatDate(value: string) {
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(
+    new Date(value)
+  );
 }

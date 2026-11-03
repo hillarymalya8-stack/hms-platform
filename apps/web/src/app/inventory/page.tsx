@@ -6,7 +6,7 @@ export default function InventoryPage() {
     <ModuleShell
       title="Inventory System"
       eyebrow="Stores"
-      description="Stock balances, receiving, department issues, transfers, daily usage records, reorder alerts, and stock movement audit."
+      description="Check stock, receive items, move stock, or open Daily Usage to record what your section used."
       requiredPermissions={["inventory.view"]}
     >
       <InventoryWorkspace />
