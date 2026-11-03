@@ -17,3 +17,11 @@ Changed application files:
 No database migration is needed. Use the existing project deployment process described in README.md and docs/netlify-deployment.md.
 
 Validation: TypeScript check passed. Seven React interaction checks passed with mocked API responses, including new/existing guest reservations, retry after reservation failure without duplicating the guest, invalid dates, settlement before checkout, and selecting the intended invoice. A production web build was also run. A live hotel database was not used, so real payments, database persistence, and physical printing still need deployment testing.
+
+## Extend stay for checked-in guests
+
+Checked-in guests can extend their stay from the room panel or the reservations list ("Extend stay").
+Staff enter the number of extra nights and the nightly rate (defaults to the booked rate). The system
+checks the room is free for the extra nights, moves the departure date, posts the extra nights as a room
+charge on the guest folio and records the change in the audit log. Prepaid credit covers the extra nights
+first; any remaining balance is collected at checkout as usual.
