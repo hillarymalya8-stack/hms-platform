@@ -6,7 +6,7 @@ export default function FinancePage() {
     <ModuleShell
       title="Finance System"
       eyebrow="Accounting"
-      description="General ledger, journal posting, trial balance, business date close, profit and loss, and balance sheet controls."
+      description="Record income and expenses, review balances, make guest invoices, and finish the business day."
       requiredPermissions={["accounting.view"]}
     >
       <FinanceWorkspace />

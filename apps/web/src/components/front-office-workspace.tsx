@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BedDouble, CalendarPlus, DoorOpen, Hotel, Pencil, ReceiptText, RefreshCcw, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { currencyLabel, formatCurrency, saleCurrencies, type SaleCurrency } from "@/lib/currency";
@@ -134,6 +134,10 @@ const mobileMoneyProviders = [
 ];
 
 export function FrontOfficeWorkspace() {
+  const reservationSection = useRef<HTMLFormElement>(null);
+  const roomSection = useRef<HTMLDivElement>(null);
+  const invoiceSection = useRef<HTMLElement>(null);
+  const [checkoutTarget, setCheckoutTarget] = useState<{ id: string; number: string } | null>(null);
   const [guests, setGuests] = useState<Guest[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -142,6 +146,9 @@ export function FrontOfficeWorkspace() {
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [message, setMessage] = useState("Sign in, then load hotel data.");
   const [busy, setBusy] = useState(false);
+  const [showReservation, setShowReservation] = useState(false);
+  const [guestMode, setGuestMode] = useState<"new" | "existing">("new");
+  const [invoiceTarget, setInvoiceTarget] = useState<{ id: string; number: string } | null>(null);
 
   const [guestForm, setGuestForm] = useState({
     firstName: "",
@@ -183,6 +190,12 @@ export function FrontOfficeWorkspace() {
     nightlyRate: ""
   });
 
+  useEffect(() => {
+    if (invoiceTarget) invoiceSection.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    else if (showReservation) reservationSection.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    else if (selectedRoomId) roomSection.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [invoiceTarget, showReservation, selectedRoomId]);
+
   const selectedRoomType = useMemo(
     () => roomTypes.find((roomType) => roomType.id === reservationForm.roomTypeId),
     [reservationForm.roomTypeId, roomTypes]
@@ -196,7 +209,10 @@ export function FrontOfficeWorkspace() {
   const settlementProviderOptions = providersForSettlementMethod(settlementForm.paymentMethod);
   const settlementProviderRequired = settlementProviderOptions.length > 0;
   const settlementReceiptRequired = settlementForm.paymentMethod !== "CASH";
-  const occupiedRooms = useMemo(() => roomChart.filter((room) => room.occupancyStatus === "OCCUPIED").length, [roomChart]);
+  const occupiedRooms = useMemo(
+    () => roomChart.filter((room) => room.occupancyStatus === "OCCUPIED").length,
+    [roomChart]
+  );
   const totalRoomBalance = useMemo(
     () =>
       roomChart.reduce((sum, room) => {
@@ -211,10 +227,6 @@ export function FrontOfficeWorkspace() {
   }, []);
 
   useEffect(() => {
-    if (!reservationForm.primaryGuestId && guests[0]) {
-      setReservationForm((current) => ({ ...current, primaryGuestId: guests[0].id }));
-    }
-
     if (!reservationForm.roomTypeId && roomTypes[0]) {
       setReservationForm((current) => ({
         ...current,
@@ -222,18 +234,7 @@ export function FrontOfficeWorkspace() {
         nightlyRate: rateFor(roomTypes[0], current.currencyCode)
       }));
     }
-
-    if (!reservationForm.roomId && rooms[0]) {
-      setReservationForm((current) => ({ ...current, roomId: rooms[0].id }));
-    }
-  }, [guests, reservationForm.primaryGuestId, reservationForm.roomId, reservationForm.roomTypeId, roomTypes, rooms]);
-
-  useEffect(() => {
-    if (!selectedRoomId && roomChart[0]) {
-      setSelectedRoomId(roomChart[0].id);
-      setChargeForm((current) => ({ ...current, roomId: roomChart[0].id }));
-    }
-  }, [roomChart, selectedRoomId]);
+  }, [reservationForm.roomTypeId, roomTypes]);
 
   useEffect(() => {
     if (!selectedStay) return;
@@ -272,7 +273,9 @@ export function FrontOfficeWorkspace() {
 
     setBusy(false);
 
-    const firstError = [guestResult, roomTypeResult, roomResult, chartResult, reservationResult].find((result) => !result.ok);
+    const firstError = [guestResult, roomTypeResult, roomResult, chartResult, reservationResult].find(
+      (result) => !result.ok
+    );
     if (firstError && !firstError.ok) {
       setMessage(firstError.error);
       return;
@@ -286,57 +289,63 @@ export function FrontOfficeWorkspace() {
     setMessage("Hotel records loaded.");
   }
 
-  async function createGuest(event: FormEvent<HTMLFormElement>) {
+  async function createReservation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const firstName = guestForm.firstName.trim();
-    const lastName = guestForm.lastName.trim();
-    const email = guestForm.email.trim().toLowerCase();
+    if (busy) return;
 
-    if (!firstName || !lastName) {
+    if (!reservationForm.nightlyRate.trim()) {
+      setMessage(
+        `Enter a ${currencyLabel(reservationForm.currencyCode)} nightly rate, or set one for this room type in Admin.`
+      );
+      return;
+    }
+
+    if (
+      !reservationForm.roomTypeId ||
+      !reservationForm.arrivalDate ||
+      !reservationForm.departureDate ||
+      reservationForm.departureDate <= reservationForm.arrivalDate ||
+      !Number.isFinite(Number(reservationForm.nightlyRate)) ||
+      Number(reservationForm.nightlyRate) < 0
+    ) {
+      setMessage("Choose a room type, valid stay dates, and a valid nightly rate.");
+      return;
+    }
+    let primaryGuestId = reservationForm.primaryGuestId;
+    if (guestMode === "new" && (!guestForm.firstName.trim() || !guestForm.lastName.trim())) {
       setMessage("Enter the guest first name and last name.");
       return;
     }
-
-    if (email && guests.some((guest) => guest.email?.toLowerCase() === email)) {
-      setMessage(`Guest email ${email} is already registered.`);
+    if (guestMode === "existing" && !primaryGuestId) {
+      setMessage("Select an existing guest.");
       return;
     }
-
     setBusy(true);
-    const result = await apiRequest<Guest>("/front-office/guests", {
-      method: "POST",
-      body: JSON.stringify({
-        firstName,
-        lastName,
-        email: email || undefined,
-        phone: guestForm.phone.trim() || undefined
-      })
-    });
-    setBusy(false);
-
-    if (!result.ok) {
-      setMessage(result.error);
-      return;
+    if (guestMode === "new") {
+      const guestResult = await apiRequest<Guest>("/front-office/guests", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: guestForm.firstName.trim(),
+          lastName: guestForm.lastName.trim(),
+          email: guestForm.email.trim() || undefined,
+          phone: guestForm.phone.trim() || undefined
+        })
+      });
+      if (!guestResult.ok) {
+        setBusy(false);
+        setMessage(guestResult.error);
+        return;
+      }
+      primaryGuestId = guestResult.data.id;
+      setGuests((current) => [...current, guestResult.data]);
+      setReservationForm((current) => ({ ...current, primaryGuestId }));
+      setGuestMode("existing");
+      setGuestForm({ firstName: "", lastName: "", email: "", phone: "" });
     }
-
-    setGuestForm({ firstName: "", lastName: "", email: "", phone: "" });
-    setMessage(`Guest created: ${result.data.firstName} ${result.data.lastName}`);
-    await loadData();
-  }
-
-  async function createReservation(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!reservationForm.nightlyRate.trim()) {
-      setMessage(`Enter a ${currencyLabel(reservationForm.currencyCode)} nightly rate, or set one for this room type in Admin.`);
-      return;
-    }
-
-    setBusy(true);
     const result = await apiRequest<Reservation>("/front-office/reservations", {
       method: "POST",
       body: JSON.stringify({
-        primaryGuestId: reservationForm.primaryGuestId,
+        primaryGuestId,
         roomTypeId: reservationForm.roomTypeId,
         roomId: reservationForm.roomId || undefined,
         arrivalDate: reservationForm.arrivalDate,
@@ -354,8 +363,10 @@ export function FrontOfficeWorkspace() {
       return;
     }
 
-    setMessage(`Reservation created: ${result.data.reservationNumber}`);
+    setShowReservation(false);
+    if (reservationForm.roomId) setSelectedRoomId(reservationForm.roomId);
     await loadData();
+    setMessage(`Reservation created: ${result.data.reservationNumber}. Use Check in when the guest arrives.`);
   }
 
   async function postCharge(event: FormEvent<HTMLFormElement>) {
@@ -367,13 +378,16 @@ export function FrontOfficeWorkspace() {
     }
 
     setBusy(true);
-    const result = await apiRequest<{ folio: { folioNumber: string; balance: string } }>(`/front-office/rooms/${chargeForm.roomId}/charges`, {
-      method: "POST",
-      body: JSON.stringify({
-        description: chargeForm.description,
-        amount: chargeForm.amount
-      })
-    });
+    const result = await apiRequest<{ folio: { folioNumber: string; balance: string } }>(
+      `/front-office/rooms/${chargeForm.roomId}/charges`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          description: chargeForm.description,
+          amount: chargeForm.amount
+        })
+      }
+    );
     setBusy(false);
 
     if (!result.ok) {
@@ -425,15 +439,18 @@ export function FrontOfficeWorkspace() {
     }
 
     setBusy(true);
-    const result = await apiRequest<SettlementResponse>(`/front-office/reservations/${selectedStay.reservationId}/settle`, {
-      method: "POST",
-      body: JSON.stringify({
-        paymentMethod: settlementForm.paymentMethod,
-        amount: settlementForm.amount,
-        paymentProvider: settlementProviderRequired ? settlementForm.paymentProvider : undefined,
-        externalReceiptNumber: settlementForm.externalReceiptNumber.trim() || undefined
-      })
-    });
+    const result = await apiRequest<SettlementResponse>(
+      `/front-office/reservations/${selectedStay.reservationId}/settle`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          paymentMethod: settlementForm.paymentMethod,
+          amount: settlementForm.amount,
+          paymentProvider: settlementProviderRequired ? settlementForm.paymentProvider : undefined,
+          externalReceiptNumber: settlementForm.externalReceiptNumber.trim() || undefined
+        })
+      }
+    );
     setBusy(false);
 
     if (!result.ok) {
@@ -468,7 +485,12 @@ export function FrontOfficeWorkspace() {
     };
 
     if (selectedStay) {
-      if (!roomEditForm.primaryGuestId || !roomEditForm.arrivalDate || !roomEditForm.departureDate || !roomEditForm.nightlyRate) {
+      if (
+        !roomEditForm.primaryGuestId ||
+        !roomEditForm.arrivalDate ||
+        !roomEditForm.departureDate ||
+        !roomEditForm.nightlyRate
+      ) {
         setMessage("Guest, stay dates, and nightly rate are required for an occupied or reserved room.");
         return;
       }
@@ -507,8 +529,11 @@ export function FrontOfficeWorkspace() {
       return;
     }
 
-    setMessage(`${result.data.reservationNumber} moved to ${result.data.status}.`);
+    if (action === "check-out") setCheckoutTarget({ id: reservationId, number: result.data.reservationNumber });
     await loadData();
+    setMessage(
+      `${result.data.reservationNumber} moved to ${result.data.status}. Use Make invoice when you need an invoice.`
+    );
   }
 
   function chooseRoom(room: RoomChartRoom) {
@@ -522,12 +547,29 @@ export function FrontOfficeWorkspace() {
     }));
   }
 
+  function openReservation(room?: RoomChartRoom) {
+    if (room) chooseRoom(room);
+    else setReservationForm((current) => ({ ...current, roomId: "" }));
+    setGuestMode("new");
+    setGuestForm({ firstName: "", lastName: "", email: "", phone: "" });
+    setReservationForm((current) => ({
+      ...current,
+      primaryGuestId: "",
+      arrivalDate: dateInputValue(0),
+      departureDate: dateInputValue(1)
+    }));
+    setShowReservation(true);
+    setInvoiceTarget(null);
+  }
+
   function changeReservationCurrency(currencyCode: SaleCurrency) {
     const roomType = roomTypes.find((item) => item.id === reservationForm.roomTypeId);
     const nightlyRate = roomType ? rateFor(roomType, currencyCode) : "";
     setReservationForm({ ...reservationForm, currencyCode, nightlyRate });
     if (roomType && !nightlyRate) {
-      setMessage(`${roomType.name} has no ${currencyLabel(currencyCode)} rate yet. Enter one manually or set it in Admin.`);
+      setMessage(
+        `${roomType.name} has no ${currencyLabel(currencyCode)} rate yet. Enter one manually or set it in Admin.`
+      );
     }
   }
 
@@ -535,16 +577,28 @@ export function FrontOfficeWorkspace() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-bold">Front Office Work Surface</h3>
-          <p className="text-sm text-muted-foreground">Room chart, guests, reservations, check-in, check-out, and guest folios.</p>
+          <h3 className="font-bold">Front Office</h3>
+          <p className="text-sm text-muted-foreground">Select a room to assign a guest, check in, or check out.</p>
         </div>
-        <Button type="button" variant="secondary" onClick={loadData} disabled={busy}>
-          <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-          Load data
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={() => openReservation()} disabled={busy}>
+            <CalendarPlus className="h-4 w-4" />
+            New Reservation
+          </Button>
+          <Button type="button" variant="secondary" onClick={loadData} disabled={busy}>
+            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
-      <p className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground">{message}</p>
+      <p
+        role="status"
+        aria-live="polite"
+        className="rounded border border-border bg-background/70 px-3 py-2 text-sm text-muted-foreground"
+      >
+        {message}
+      </p>
 
       <div className="rounded border border-border bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -572,7 +626,13 @@ export function FrontOfficeWorkspace() {
                   "min-h-[152px] rounded border bg-background p-3 text-left transition-colors hover:border-primary",
                   selectedRoomId === room.id ? "border-primary ring-2 ring-primary/20" : "border-border"
                 )}
-                onClick={() => chooseRoom(room)}
+                disabled={busy}
+                aria-pressed={selectedRoomId === room.id}
+                onClick={() => {
+                  chooseRoom(room);
+                  setShowReservation(false);
+                  setInvoiceTarget(null);
+                }}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -591,14 +651,20 @@ export function FrontOfficeWorkspace() {
                         {formatDate(room.currentStay.arrivalDate)} to {formatDate(room.currentStay.departureDate)}
                       </p>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <span className="rounded bg-muted px-2 py-1">POS {formatMoney(room.currentStay.folio?.posCharges ?? "0")}</span>
-                        <span className="rounded bg-muted px-2 py-1">Balance {formatMoney(room.currentStay.folio?.balance ?? "0")}</span>
+                        <span className="rounded bg-muted px-2 py-1">
+                          POS {formatMoney(room.currentStay.folio?.posCharges ?? "0")}
+                        </span>
+                        <span className="rounded bg-muted px-2 py-1">
+                          Balance {formatMoney(room.currentStay.folio?.balance ?? "0")}
+                        </span>
                       </div>
                     </>
                   ) : (
                     <>
                       <p className="font-semibold">No active guest</p>
-                      <p className="text-muted-foreground">{room.housekeepingStatus.toLowerCase().replaceAll("_", " ")}</p>
+                      <p className="text-muted-foreground">
+                        {room.housekeepingStatus.toLowerCase().replaceAll("_", " ")}
+                      </p>
                     </>
                   )}
                 </div>
@@ -608,394 +674,555 @@ export function FrontOfficeWorkspace() {
         </div>
       </div>
 
-      <InvoiceWorkspace />
+      {checkoutTarget ? (
+        <div className="flex flex-wrap items-center gap-3 rounded border border-border bg-white p-3">
+          <p className="text-sm">Checkout complete: {checkoutTarget.number}</p>
+          <Button type="button" variant="secondary" onClick={() => setInvoiceTarget(checkoutTarget)}>
+            Make invoice
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => setCheckoutTarget(null)}>
+            Dismiss
+          </Button>
+        </div>
+      ) : null}
+      {invoiceTarget ? (
+        <section ref={invoiceSection} aria-label="Make invoice" className="space-y-2">
+          <Button type="button" variant="secondary" onClick={() => setInvoiceTarget(null)}>
+            Close invoice
+          </Button>
+          <InvoiceWorkspace
+            key={invoiceTarget.id}
+            initialQuery={invoiceTarget.number}
+            initialReservationId={invoiceTarget.id}
+          />
+        </section>
+      ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="space-y-4">
-          <form onSubmit={createGuest} className="rounded border border-border bg-white p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-primary" aria-hidden="true" />
-              <h4 className="font-bold">New Guest</h4>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input
-                aria-label="First name"
-                value={guestForm.firstName}
-                onChange={(event) => setGuestForm({ ...guestForm, firstName: event.target.value })}
-                placeholder="First name"
-              />
-              <Input
-                aria-label="Last name"
-                value={guestForm.lastName}
-                onChange={(event) => setGuestForm({ ...guestForm, lastName: event.target.value })}
-                placeholder="Last name"
-              />
-              <Input
-                aria-label="Email"
-                value={guestForm.email}
-                onChange={(event) => setGuestForm({ ...guestForm, email: event.target.value })}
-                placeholder="Email"
-                type="email"
-              />
-              <Input
-                aria-label="Phone"
-                value={guestForm.phone}
-                onChange={(event) => setGuestForm({ ...guestForm, phone: event.target.value })}
-                placeholder="Phone"
-              />
-            </div>
-            <Button className="mt-3" disabled={busy}>
-              <UserPlus className="h-4 w-4" aria-hidden="true" />
-              Add guest
-            </Button>
-          </form>
-
-          <form onSubmit={createReservation} className="rounded border border-border bg-white p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <CalendarPlus className="h-4 w-4 text-primary" aria-hidden="true" />
-              <h4 className="font-bold">New Reservation</h4>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <select
-                aria-label="Guest"
-                className="h-10 rounded border border-border bg-white px-3 text-sm"
-                value={reservationForm.primaryGuestId}
-                onChange={(event) => setReservationForm({ ...reservationForm, primaryGuestId: event.target.value })}
-              >
-                <option value="">Select guest</option>
-                {guests.map((guest) => (
-                  <option key={guest.id} value={guest.id}>
-                    {guest.firstName} {guest.lastName}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Room type"
-                className="h-10 rounded border border-border bg-white px-3 text-sm"
-                value={reservationForm.roomTypeId}
-                onChange={(event) => {
-                  const roomType = roomTypes.find((item) => item.id === event.target.value);
-                  setReservationForm({
-                    ...reservationForm,
-                    roomTypeId: event.target.value,
-                    nightlyRate: roomType ? rateFor(roomType, reservationForm.currencyCode) : reservationForm.nightlyRate
-                  });
-                }}
-              >
-                <option value="">Select room type</option>
-                {roomTypes.map((roomType) => (
-                  <option key={roomType.id} value={roomType.id}>
-                    {roomType.code} - {roomType.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Room"
-                className="h-10 rounded border border-border bg-white px-3 text-sm"
-                value={reservationForm.roomId}
-                onChange={(event) => {
-                  const room = roomChart.find((entry) => entry.id === event.target.value);
-                  if (room) chooseRoom(room);
-                  else setReservationForm({ ...reservationForm, roomId: event.target.value });
-                }}
-              >
-                <option value="">Assign later</option>
-                {rooms
-                  .filter((room) => !selectedRoomType || room.roomType.id === selectedRoomType.id)
-                  .map((room) => (
-                    <option key={room.id} value={room.id}>
-                      Room {room.roomNumber} - {room.occupancyStatus}
-                    </option>
-                  ))}
-              </select>
-              <div className="flex gap-2">
-                <select
-                  aria-label="Stay currency"
-                  className="h-10 rounded border border-border bg-white px-3 text-sm font-semibold"
-                  value={reservationForm.currencyCode}
-                  onChange={(event) => changeReservationCurrency(event.target.value as SaleCurrency)}
-                >
-                  {saleCurrencies.map((currency) => (
-                    <option key={currency.code} value={currency.code}>
-                      {currency.label}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  aria-label="Nightly rate"
-                  inputMode="decimal"
-                  value={reservationForm.nightlyRate}
-                  onChange={(event) => setReservationForm({ ...reservationForm, nightlyRate: event.target.value })}
-                  placeholder={`Nightly rate (${currencyLabel(reservationForm.currencyCode)})`}
-                />
+      <div className={cn("grid gap-5", showReservation && "xl:grid-cols-[0.95fr_1.05fr]")}>
+        <div className={showReservation ? "space-y-4" : "hidden"}>
+          {showReservation ? (
+            <form
+              ref={reservationSection}
+              onSubmit={createReservation}
+              className="rounded border border-border bg-white p-4"
+            >
+              <div className="mb-3 flex items-center gap-2">
+                <CalendarPlus className="h-4 w-4 text-primary" aria-hidden="true" />
+                <h4 className="font-bold">New Reservation</h4>
               </div>
-              <Input
-                aria-label="Arrival date"
-                type="date"
-                value={reservationForm.arrivalDate}
-                onChange={(event) => setReservationForm({ ...reservationForm, arrivalDate: event.target.value })}
-              />
-              <Input
-                aria-label="Departure date"
-                type="date"
-                value={reservationForm.departureDate}
-                onChange={(event) => setReservationForm({ ...reservationForm, departureDate: event.target.value })}
-              />
-            </div>
-            <Button className="mt-3" disabled={busy || !reservationForm.primaryGuestId || !reservationForm.roomTypeId}>
-              <CalendarPlus className="h-4 w-4" aria-hidden="true" />
-              Create reservation
-            </Button>
-          </form>
+              <fieldset disabled={busy} className="min-w-0">
+                <div className="mb-4 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant={guestMode === "new" ? "primary" : "secondary"}
+                      onClick={() => setGuestMode("new")}
+                    >
+                      New guest
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={guestMode === "existing" ? "primary" : "secondary"}
+                      onClick={() => setGuestMode("existing")}
+                    >
+                      Existing guest
+                    </Button>
+                    <Button type="button" variant="ghost" disabled={busy} onClick={() => setShowReservation(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                  {guestMode === "new" ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Input
+                        aria-label="First name"
+                        value={guestForm.firstName}
+                        onChange={(event) => setGuestForm({ ...guestForm, firstName: event.target.value })}
+                        placeholder="First name"
+                      />
+                      <Input
+                        aria-label="Last name"
+                        value={guestForm.lastName}
+                        onChange={(event) => setGuestForm({ ...guestForm, lastName: event.target.value })}
+                        placeholder="Last name"
+                      />
+                      <Input
+                        aria-label="Email"
+                        value={guestForm.email}
+                        onChange={(event) => setGuestForm({ ...guestForm, email: event.target.value })}
+                        placeholder="Email"
+                        type="email"
+                      />
+                      <Input
+                        aria-label="Phone"
+                        value={guestForm.phone}
+                        onChange={(event) => setGuestForm({ ...guestForm, phone: event.target.value })}
+                        placeholder="Phone"
+                      />
+                    </div>
+                  ) : (
+                    <select
+                      aria-label="Guest"
+                      className="h-10 rounded border border-border bg-white px-3 text-sm"
+                      value={reservationForm.primaryGuestId}
+                      onChange={(event) =>
+                        setReservationForm({ ...reservationForm, primaryGuestId: event.target.value })
+                      }
+                    >
+                      <option value="">Select guest</option>
+                      {guests.map((guest) => (
+                        <option key={guest.id} value={guest.id}>
+                          {guest.firstName} {guest.lastName}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <select
+                    aria-label="Room type"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={reservationForm.roomTypeId}
+                    onChange={(event) => {
+                      const roomType = roomTypes.find((item) => item.id === event.target.value);
+                      setReservationForm({
+                        ...reservationForm,
+                        roomTypeId: event.target.value,
+                        roomId: "",
+                        nightlyRate: roomType
+                          ? rateFor(roomType, reservationForm.currencyCode)
+                          : reservationForm.nightlyRate
+                      });
+                    }}
+                  >
+                    <option value="">Select room type</option>
+                    {roomTypes.map((roomType) => (
+                      <option key={roomType.id} value={roomType.id}>
+                        {roomType.code} - {roomType.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Room"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={reservationForm.roomId}
+                    onChange={(event) => {
+                      const room = roomChart.find((entry) => entry.id === event.target.value);
+                      if (room) chooseRoom(room);
+                      else setReservationForm({ ...reservationForm, roomId: event.target.value });
+                    }}
+                  >
+                    <option value="">Assign later</option>
+                    {rooms
+                      .filter((room) => !selectedRoomType || room.roomType.id === selectedRoomType.id)
+                      .map((room) => (
+                        <option key={room.id} value={room.id}>
+                          Room {room.roomNumber} - {room.occupancyStatus}
+                        </option>
+                      ))}
+                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      aria-label="Stay currency"
+                      className="h-10 rounded border border-border bg-white px-3 text-sm font-semibold"
+                      value={reservationForm.currencyCode}
+                      onChange={(event) => changeReservationCurrency(event.target.value as SaleCurrency)}
+                    >
+                      {saleCurrencies.map((currency) => (
+                        <option key={currency.code} value={currency.code}>
+                          {currency.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      aria-label="Nightly rate"
+                      inputMode="decimal"
+                      value={reservationForm.nightlyRate}
+                      onChange={(event) => setReservationForm({ ...reservationForm, nightlyRate: event.target.value })}
+                      placeholder={`Nightly rate (${currencyLabel(reservationForm.currencyCode)})`}
+                    />
+                  </div>
+                  <Input
+                    aria-label="Arrival date"
+                    type="date"
+                    value={reservationForm.arrivalDate}
+                    onChange={(event) => setReservationForm({ ...reservationForm, arrivalDate: event.target.value })}
+                  />
+                  <Input
+                    aria-label="Departure date"
+                    type="date"
+                    value={reservationForm.departureDate}
+                    onChange={(event) => setReservationForm({ ...reservationForm, departureDate: event.target.value })}
+                  />
+                </div>
+                <Button
+                  className="mt-3"
+                  disabled={
+                    busy || !reservationForm.roomTypeId || (guestMode === "existing" && !reservationForm.primaryGuestId)
+                  }
+                >
+                  <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+                  Save reservation
+                </Button>
+              </fieldset>
+            </form>
+          ) : null}
         </div>
 
         <div className="space-y-4">
-          <div className="rounded border border-border bg-white">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2">
-                <ReceiptText className="h-4 w-4 text-primary" aria-hidden="true" />
-                <h4 className="font-bold">Selected Room</h4>
+          {selectedChartRoom ? (
+            <div ref={roomSection} className="rounded border border-border bg-white">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <ReceiptText className="h-4 w-4 text-primary" aria-hidden="true" />
+                  <h4 className="font-bold">Selected Room</h4>
+                </div>
+                {selectedChartRoom ? (
+                  <Badge tone={roomBadgeTone(selectedChartRoom)}>Room {selectedChartRoom.roomNumber}</Badge>
+                ) : null}
               </div>
-              {selectedChartRoom ? <Badge tone={roomBadgeTone(selectedChartRoom)}>Room {selectedChartRoom.roomNumber}</Badge> : null}
-            </div>
-            <div className="p-4">
-              {!selectedChartRoom ? (
-                <p className="text-sm text-muted-foreground">No room selected.</p>
-              ) : (
-                <div className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <RoomFact label="Type" value={selectedChartRoom.roomType.name} />
-                    <RoomFact label="Status" value={roomStatusLabel(selectedChartRoom)} />
-                    <RoomFact
-                      label="Rate"
-                      value={[
-                        formatCurrency(selectedChartRoom.roomType.baseRate, "TZS"),
-                        selectedChartRoom.roomType.baseRateUsd ? formatCurrency(selectedChartRoom.roomType.baseRateUsd, "USD") : null
-                      ]
-                        .filter(Boolean)
-                        .join(" / ")}
-                    />
-                  </div>
-                  <form onSubmit={saveRoomChartEdit} className="rounded border border-border bg-background p-3">
-                    <div className="mb-3 flex items-center gap-2">
-                      <Pencil className="h-4 w-4 text-primary" aria-hidden="true" />
-                      <h5 className="font-bold">Edit Room Chart</h5>
+              <div className="p-4">
+                {!selectedChartRoom ? (
+                  <p className="text-sm text-muted-foreground">No room selected.</p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <RoomFact label="Type" value={selectedChartRoom.roomType.name} />
+                      <RoomFact label="Status" value={roomStatusLabel(selectedChartRoom)} />
+                      <RoomFact
+                        label="Rate"
+                        value={[
+                          formatCurrency(selectedChartRoom.roomType.baseRate, "TZS"),
+                          selectedChartRoom.roomType.baseRateUsd
+                            ? formatCurrency(selectedChartRoom.roomType.baseRateUsd, "USD")
+                            : null
+                        ]
+                          .filter(Boolean)
+                          .join(" / ")}
+                      />
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="block space-y-1.5">
-                        <span className="text-sm font-medium">Housekeeping</span>
-                        <select
-                          aria-label="Housekeeping status"
-                          className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
-                          value={roomEditForm.housekeepingStatus}
-                          onChange={(event) => setRoomEditForm({ ...roomEditForm, housekeepingStatus: event.target.value })}
+                    <div className="flex flex-wrap gap-2">
+                      {!selectedStay ? (
+                        <Button
+                          type="button"
+                          disabled={
+                            busy ||
+                            !selectedChartRoom.active ||
+                            (selectedChartRoom.maintenanceStatus ?? "AVAILABLE") !== "AVAILABLE"
+                          }
+                          onClick={() => openReservation(selectedChartRoom)}
                         >
-                          <option value="CLEAN">Clean</option>
-                          <option value="DIRTY">Dirty</option>
-                          <option value="INSPECTED">Inspected</option>
-                        </select>
-                      </label>
-                      <label className="block space-y-1.5">
-                        <span className="text-sm font-medium">Maintenance</span>
-                        <select
-                          aria-label="Maintenance status"
-                          className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
-                          value={roomEditForm.maintenanceStatus}
-                          onChange={(event) => setRoomEditForm({ ...roomEditForm, maintenanceStatus: event.target.value })}
-                        >
-                          <option value="AVAILABLE">Available</option>
-                          <option value="OUT_OF_SERVICE">Out of service</option>
-                          <option value="OUT_OF_ORDER">Out of order</option>
-                        </select>
-                      </label>
-                      {selectedChartRoom.currentStay ? (
+                          Assign guest / New Reservation
+                        </Button>
+                      ) : (
                         <>
-                          <label className="block space-y-1.5 sm:col-span-2">
-                            <span className="text-sm font-medium">Guest</span>
-                            <select
-                              aria-label="Current stay guest"
-                              className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
-                              value={roomEditForm.primaryGuestId}
-                              onChange={(event) => setRoomEditForm({ ...roomEditForm, primaryGuestId: event.target.value })}
-                            >
-                              <option value="">Select guest</option>
-                              {guests.map((guest) => (
-                                <option key={guest.id} value={guest.id}>
-                                  {guest.firstName} {guest.lastName}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block space-y-1.5">
-                            <span className="text-sm font-medium">Arrival</span>
-                            <Input
-                              aria-label="Edit arrival date"
-                              type="date"
-                              value={roomEditForm.arrivalDate}
-                              onChange={(event) => setRoomEditForm({ ...roomEditForm, arrivalDate: event.target.value })}
-                            />
-                          </label>
-                          <label className="block space-y-1.5">
-                            <span className="text-sm font-medium">Departure</span>
-                            <Input
-                              aria-label="Edit departure date"
-                              type="date"
-                              value={roomEditForm.departureDate}
-                              onChange={(event) => setRoomEditForm({ ...roomEditForm, departureDate: event.target.value })}
-                            />
-                          </label>
-                          <label className="block space-y-1.5 sm:col-span-2">
-                            <span className="text-sm font-medium">
-                              Nightly rate ({currencyLabel(selectedChartRoom.currentStay?.currencyCode ?? "TZS")})
-                            </span>
-                            <Input
-                              aria-label="Edit nightly rate"
-                              value={roomEditForm.nightlyRate}
-                              onChange={(event) => setRoomEditForm({ ...roomEditForm, nightlyRate: event.target.value })}
-                              placeholder="Nightly rate"
-                            />
-                          </label>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy || selectedStay.status !== "CONFIRMED"}
+                            onClick={() => transitionReservation(selectedStay.reservationId, "check-in")}
+                          >
+                            Check in
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={busy || selectedStay.status !== "CHECKED_IN" || selectedBalance !== 0}
+                            onClick={() => transitionReservation(selectedStay.reservationId, "check-out")}
+                          >
+                            Check out
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() =>
+                              setInvoiceTarget({
+                                id: selectedStay.reservationId,
+                                number: selectedStay.reservationNumber
+                              })
+                            }
+                          >
+                            Make invoice
+                          </Button>
                         </>
-                      ) : null}
+                      )}
                     </div>
-                    <Button className="mt-3" disabled={busy || !selectedChartRoom}>
-                      <Pencil className="h-4 w-4" aria-hidden="true" />
-                      Save room chart
-                    </Button>
-                  </form>
-                  {selectedChartRoom.currentStay ? (
-                    <>
-                      <div className="rounded border border-border bg-muted/40 p-3">
-                        <p className="font-bold">
-                          {selectedChartRoom.currentStay.guest.firstName} {selectedChartRoom.currentStay.guest.lastName}
-                        </p>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {selectedChartRoom.currentStay.reservationNumber} - {formatDate(selectedChartRoom.currentStay.arrivalDate)} to{" "}
-                          {formatDate(selectedChartRoom.currentStay.departureDate)}
-                        </p>
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <RoomFact label="Room/postings" value={formatMoney(selectedChartRoom.currentStay.folio?.roomCharges ?? "0")} />
-                        <RoomFact label="POS charges" value={formatMoney(selectedChartRoom.currentStay.folio?.posCharges ?? "0")} />
-                        <RoomFact label="Balance" value={formatMoney(selectedChartRoom.currentStay.folio?.balance ?? "0")} />
-                      </div>
-                      <form onSubmit={settleFolio} className="rounded border border-border bg-background p-3">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <h5 className="font-bold">Checkout Payment</h5>
-                          <Badge tone={selectedBalance > 0 ? "warning" : "success"}>
-                            {selectedBalance > 0 ? formatMoney(selectedBalance) : "Settled"}
-                          </Badge>
+                    {selectedStay?.status === "CHECKED_IN" && selectedBalance !== 0 ? (
+                      <p className="text-sm text-muted-foreground">Settle the folio balance below before checkout.</p>
+                    ) : null}
+                    <details>
+                      <summary className="cursor-pointer text-sm font-semibold">Edit room and stay details</summary>
+                      <form onSubmit={saveRoomChartEdit} className="rounded border border-border bg-background p-3">
+                        <div className="mb-3 flex items-center gap-2">
+                          <Pencil className="h-4 w-4 text-primary" aria-hidden="true" />
+                          <h5 className="font-bold">Edit Room Chart</h5>
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">
                           <label className="block space-y-1.5">
-                            <span className="text-sm font-medium">Payment method</span>
+                            <span className="text-sm font-medium">Housekeeping</span>
                             <select
-                              aria-label="Payment method"
+                              aria-label="Housekeeping status"
                               className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
-                              value={settlementForm.paymentMethod}
-                              onChange={(event) => changeSettlementMethod(event.target.value as SettlementPaymentMethod)}
+                              value={roomEditForm.housekeepingStatus}
+                              onChange={(event) =>
+                                setRoomEditForm({ ...roomEditForm, housekeepingStatus: event.target.value })
+                              }
                             >
-                              {settlementPaymentMethods.map((method) => (
-                                <option key={method.value} value={method.value}>
-                                  {method.label}
-                                </option>
-                              ))}
+                              <option value="CLEAN">Clean</option>
+                              <option value="DIRTY">Dirty</option>
+                              <option value="INSPECTED">Inspected</option>
                             </select>
                           </label>
                           <label className="block space-y-1.5">
-                            <span className="text-sm font-medium">Amount</span>
-                            <Input
-                              aria-label="Payment amount"
-                              value={settlementForm.amount}
-                              onChange={(event) => setSettlementForm({ ...settlementForm, amount: event.target.value })}
-                              placeholder="Amount"
-                            />
+                            <span className="text-sm font-medium">Maintenance</span>
+                            <select
+                              aria-label="Maintenance status"
+                              className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
+                              value={roomEditForm.maintenanceStatus}
+                              onChange={(event) =>
+                                setRoomEditForm({ ...roomEditForm, maintenanceStatus: event.target.value })
+                              }
+                            >
+                              <option value="AVAILABLE">Available</option>
+                              <option value="OUT_OF_SERVICE">Out of service</option>
+                              <option value="OUT_OF_ORDER">Out of order</option>
+                            </select>
                           </label>
-                          {settlementProviderRequired ? (
-                            <label className="block space-y-1.5">
-                              <span className="text-sm font-medium">
-                                {settlementForm.paymentMethod === "MOBILE_MONEY" ? "Mobile service" : "Bank provider"}
-                              </span>
-                              <select
-                                aria-label="Payment provider"
-                                className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
-                                value={settlementForm.paymentProvider}
-                                onChange={(event) => setSettlementForm({ ...settlementForm, paymentProvider: event.target.value })}
-                              >
-                                {settlementProviderOptions.map((provider) => (
-                                  <option key={provider.value} value={provider.value}>
-                                    {provider.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          ) : null}
-                          {settlementReceiptRequired ? (
-                            <label className="block space-y-1.5">
-                              <span className="text-sm font-medium">Receipt ID number</span>
-                              <Input
-                                aria-label="Receipt ID number"
-                                value={settlementForm.externalReceiptNumber}
-                                onChange={(event) =>
-                                  setSettlementForm({ ...settlementForm, externalReceiptNumber: event.target.value })
-                                }
-                                placeholder="Receipt ID"
-                              />
-                            </label>
+                          {selectedChartRoom.currentStay ? (
+                            <>
+                              <label className="block space-y-1.5 sm:col-span-2">
+                                <span className="text-sm font-medium">Guest</span>
+                                <select
+                                  aria-label="Current stay guest"
+                                  className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
+                                  value={roomEditForm.primaryGuestId}
+                                  onChange={(event) =>
+                                    setRoomEditForm({ ...roomEditForm, primaryGuestId: event.target.value })
+                                  }
+                                >
+                                  <option value="">Select guest</option>
+                                  {guests.map((guest) => (
+                                    <option key={guest.id} value={guest.id}>
+                                      {guest.firstName} {guest.lastName}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="block space-y-1.5">
+                                <span className="text-sm font-medium">Arrival</span>
+                                <Input
+                                  aria-label="Edit arrival date"
+                                  type="date"
+                                  value={roomEditForm.arrivalDate}
+                                  onChange={(event) =>
+                                    setRoomEditForm({ ...roomEditForm, arrivalDate: event.target.value })
+                                  }
+                                />
+                              </label>
+                              <label className="block space-y-1.5">
+                                <span className="text-sm font-medium">Departure</span>
+                                <Input
+                                  aria-label="Edit departure date"
+                                  type="date"
+                                  value={roomEditForm.departureDate}
+                                  onChange={(event) =>
+                                    setRoomEditForm({ ...roomEditForm, departureDate: event.target.value })
+                                  }
+                                />
+                              </label>
+                              <label className="block space-y-1.5 sm:col-span-2">
+                                <span className="text-sm font-medium">
+                                  Nightly rate ({currencyLabel(selectedChartRoom.currentStay?.currencyCode ?? "TZS")})
+                                </span>
+                                <Input
+                                  aria-label="Edit nightly rate"
+                                  value={roomEditForm.nightlyRate}
+                                  onChange={(event) =>
+                                    setRoomEditForm({ ...roomEditForm, nightlyRate: event.target.value })
+                                  }
+                                  placeholder="Nightly rate"
+                                />
+                              </label>
+                            </>
                           ) : null}
                         </div>
-                        <Button className="mt-3" disabled={busy || !selectedChartRoom.currentStay || selectedBalance <= 0}>
-                          <ReceiptText className="h-4 w-4" aria-hidden="true" />
-                          Record payment
+                        <Button className="mt-3" disabled={busy || !selectedChartRoom}>
+                          <Pencil className="h-4 w-4" aria-hidden="true" />
+                          Save room chart
                         </Button>
                       </form>
-                      <form onSubmit={postCharge} className="rounded border border-border bg-background p-3">
-                        <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
-                          <Input
-                            aria-label="Charge description"
-                            value={chargeForm.description}
-                            onChange={(event) => setChargeForm({ ...chargeForm, description: event.target.value })}
-                            placeholder="Charge description"
+                    </details>
+                    {selectedChartRoom.currentStay ? (
+                      <>
+                        <div className="rounded border border-border bg-muted/40 p-3">
+                          <p className="font-bold">
+                            {selectedChartRoom.currentStay.guest.firstName}{" "}
+                            {selectedChartRoom.currentStay.guest.lastName}
+                          </p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {selectedChartRoom.currentStay.reservationNumber} -{" "}
+                            {formatDate(selectedChartRoom.currentStay.arrivalDate)} to{" "}
+                            {formatDate(selectedChartRoom.currentStay.departureDate)}
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <RoomFact
+                            label="Room/postings"
+                            value={formatMoney(selectedChartRoom.currentStay.folio?.roomCharges ?? "0")}
                           />
-                          <Input
-                            aria-label="Charge amount"
-                            value={chargeForm.amount}
-                            onChange={(event) => setChargeForm({ ...chargeForm, amount: event.target.value })}
-                            placeholder="Amount"
+                          <RoomFact
+                            label="POS charges"
+                            value={formatMoney(selectedChartRoom.currentStay.folio?.posCharges ?? "0")}
+                          />
+                          <RoomFact
+                            label="Balance"
+                            value={formatMoney(selectedChartRoom.currentStay.folio?.balance ?? "0")}
                           />
                         </div>
-                        <Button className="mt-3" disabled={busy || !selectedChartRoom.currentStay}>
-                          <ReceiptText className="h-4 w-4" aria-hidden="true" />
-                          Post charge
-                        </Button>
-                      </form>
-                      <div className="divide-y divide-border rounded border border-border">
-                        {(selectedChartRoom.currentStay.folio?.recentCharges ?? []).length === 0 ? (
-                          <p className="px-3 py-4 text-sm text-muted-foreground">No folio charges yet.</p>
-                        ) : (
-                          selectedChartRoom.currentStay.folio?.recentCharges.map((charge) => (
-                            <div key={charge.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                              <div>
-                                <p className="font-semibold">{charge.description}</p>
-                                <p className="text-xs text-muted-foreground">{charge.itemType.replaceAll("_", " ").toLowerCase()}</p>
+                        {selectedStay?.status === "CHECKED_IN" ? (
+                          <>
+                            <form onSubmit={settleFolio} className="rounded border border-border bg-background p-3">
+                              <div className="mb-3 flex items-center justify-between gap-3">
+                                <h5 className="font-bold">Checkout Payment</h5>
+                                <Badge tone={selectedBalance > 0 ? "warning" : "success"}>
+                                  {selectedBalance > 0 ? formatMoney(selectedBalance) : "Settled"}
+                                </Badge>
                               </div>
-                              <span className="font-bold tabular-nums">{formatMoney(charge.totalAmount)}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <p className="rounded border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-                      No checked-in guest is attached to this room.
-                    </p>
-                  )}
-                </div>
-              )}
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="block space-y-1.5">
+                                  <span className="text-sm font-medium">Payment method</span>
+                                  <select
+                                    aria-label="Payment method"
+                                    className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
+                                    value={settlementForm.paymentMethod}
+                                    onChange={(event) =>
+                                      changeSettlementMethod(event.target.value as SettlementPaymentMethod)
+                                    }
+                                  >
+                                    {settlementPaymentMethods.map((method) => (
+                                      <option key={method.value} value={method.value}>
+                                        {method.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block space-y-1.5">
+                                  <span className="text-sm font-medium">Amount</span>
+                                  <Input
+                                    aria-label="Payment amount"
+                                    value={settlementForm.amount}
+                                    onChange={(event) =>
+                                      setSettlementForm({ ...settlementForm, amount: event.target.value })
+                                    }
+                                    placeholder="Amount"
+                                  />
+                                </label>
+                                {settlementProviderRequired ? (
+                                  <label className="block space-y-1.5">
+                                    <span className="text-sm font-medium">
+                                      {settlementForm.paymentMethod === "MOBILE_MONEY"
+                                        ? "Mobile service"
+                                        : "Bank provider"}
+                                    </span>
+                                    <select
+                                      aria-label="Payment provider"
+                                      className="h-10 w-full rounded border border-border bg-white px-3 text-sm"
+                                      value={settlementForm.paymentProvider}
+                                      onChange={(event) =>
+                                        setSettlementForm({ ...settlementForm, paymentProvider: event.target.value })
+                                      }
+                                    >
+                                      {settlementProviderOptions.map((provider) => (
+                                        <option key={provider.value} value={provider.value}>
+                                          {provider.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : null}
+                                {settlementReceiptRequired ? (
+                                  <label className="block space-y-1.5">
+                                    <span className="text-sm font-medium">Receipt ID number</span>
+                                    <Input
+                                      aria-label="Receipt ID number"
+                                      value={settlementForm.externalReceiptNumber}
+                                      onChange={(event) =>
+                                        setSettlementForm({
+                                          ...settlementForm,
+                                          externalReceiptNumber: event.target.value
+                                        })
+                                      }
+                                      placeholder="Receipt ID"
+                                    />
+                                  </label>
+                                ) : null}
+                              </div>
+                              <Button
+                                className="mt-3"
+                                disabled={busy || !selectedChartRoom.currentStay || selectedBalance <= 0}
+                              >
+                                <ReceiptText className="h-4 w-4" aria-hidden="true" />
+                                Record payment
+                              </Button>
+                            </form>
+                            <form onSubmit={postCharge} className="rounded border border-border bg-background p-3">
+                              <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
+                                <Input
+                                  aria-label="Charge description"
+                                  value={chargeForm.description}
+                                  onChange={(event) =>
+                                    setChargeForm({ ...chargeForm, description: event.target.value })
+                                  }
+                                  placeholder="Charge description"
+                                />
+                                <Input
+                                  aria-label="Charge amount"
+                                  value={chargeForm.amount}
+                                  onChange={(event) => setChargeForm({ ...chargeForm, amount: event.target.value })}
+                                  placeholder="Amount"
+                                />
+                              </div>
+                              <Button className="mt-3" disabled={busy || !selectedChartRoom.currentStay}>
+                                <ReceiptText className="h-4 w-4" aria-hidden="true" />
+                                Post charge
+                              </Button>
+                            </form>
+                          </>
+                        ) : null}
+                        <div className="divide-y divide-border rounded border border-border">
+                          {(selectedChartRoom.currentStay.folio?.recentCharges ?? []).length === 0 ? (
+                            <p className="px-3 py-4 text-sm text-muted-foreground">No folio charges yet.</p>
+                          ) : (
+                            selectedChartRoom.currentStay.folio?.recentCharges.map((charge) => (
+                              <div
+                                key={charge.id}
+                                className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                              >
+                                <div>
+                                  <p className="font-semibold">{charge.description}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {charge.itemType.replaceAll("_", " ").toLowerCase()}
+                                  </p>
+                                </div>
+                                <span className="font-bold tabular-nums">{formatMoney(charge.totalAmount)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="rounded border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+                        No checked-in guest is attached to this room.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          ) : null}
 
-          <div className="rounded border border-border bg-white">
+          <details className="rounded border border-border bg-white">
+            <summary className="cursor-pointer px-4 py-3 font-bold">
+              Reservations ({reservations.length}) — check in, check out, or make invoice
+            </summary>
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <BedDouble className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -1021,21 +1248,25 @@ export function FrontOfficeWorkspace() {
                             {formatDate(reservation.arrivalDate)} to {formatDate(reservation.departureDate)}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            {assigned?.room ? `Room ${assigned.room.roomNumber}` : "Room not assigned"} - {assigned?.roomType.name}
+                            {assigned?.room ? `Room ${assigned.room.roomNumber}` : "Room not assigned"} -{" "}
+                            {assigned?.roomType.name}
                           </p>
                         </div>
-                        <Badge tone={reservation.status === "CHECKED_IN" ? "success" : "neutral"}>{reservation.status}</Badge>
+                        <Badge tone={reservation.status === "CHECKED_IN" ? "success" : "neutral"}>
+                          {reservation.status}
+                        </Badge>
                       </div>
                       {reservation.folios[0] ? (
                         <p className="mt-3 rounded bg-background/80 px-3 py-2 text-sm">
-                          Folio {reservation.folios[0].folioNumber} - Balance {formatMoney(reservation.folios[0].balance)}
+                          Folio {reservation.folios[0].folioNumber} - Balance{" "}
+                          {formatMoney(reservation.folios[0].balance)}
                         </p>
                       ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Button
                           type="button"
                           variant="secondary"
-                          disabled={busy || reservation.status !== "CONFIRMED"}
+                          disabled={busy || reservation.status !== "CONFIRMED" || !assigned?.room}
                           onClick={() => transitionReservation(reservation.id, "check-in")}
                         >
                           <DoorOpen className="h-4 w-4" aria-hidden="true" />
@@ -1044,10 +1275,23 @@ export function FrontOfficeWorkspace() {
                         <Button
                           type="button"
                           variant="secondary"
-                          disabled={busy || reservation.status !== "CHECKED_IN"}
+                          disabled={
+                            busy ||
+                            reservation.status !== "CHECKED_IN" ||
+                            reservation.folios.some((folio) => Number(folio.balance) !== 0)
+                          }
                           onClick={() => transitionReservation(reservation.id, "check-out")}
                         >
                           Check out
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() =>
+                            setInvoiceTarget({ id: reservation.id, number: reservation.reservationNumber })
+                          }
+                        >
+                          Make invoice
                         </Button>
                       </div>
                     </div>
@@ -1055,7 +1299,7 @@ export function FrontOfficeWorkspace() {
                 })
               )}
             </div>
-          </div>
+          </details>
         </div>
       </div>
     </div>
