@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { permissions, roleAccessLevels, storeAccess } from "@hms/shared";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { AuthService } from "../auth/auth.service";
+import { defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
 import { defaultChartOfAccounts, defaultNumberingRules, defaultStoreTypes } from "./default-setup";
 import { RunSetupDto } from "./dto/run-setup.dto";
 
@@ -155,6 +156,7 @@ export class SetupService {
       { name: "Restaurant", type: PosOutletType.RESTAURANT, revenue: "4200", device: "REST-POS-01", drawer: "Main Drawer" },
       { name: "Bar", type: PosOutletType.BAR, revenue: "4300", device: "BAR-POS-01", drawer: "Bar Drawer" }
     ];
+    let restaurantOutletId: string | undefined;
     for (const outlet of outlets) {
       const created = await tx.posOutlet.create({
         data: {
@@ -165,6 +167,7 @@ export class SetupService {
           defaultRevenueAccountId: accountIdsByCode.get(outlet.revenue)
         }
       });
+      if (outlet.type === PosOutletType.RESTAURANT) restaurantOutletId = created.id;
       const terminal = await tx.posTerminal.create({
         data: { outletId: created.id, name: `${outlet.name} POS 01`, deviceIdentifier: outlet.device }
       });
@@ -179,6 +182,8 @@ export class SetupService {
         { propertyId: property.id, name: "Drinks", revenueAccountId: accountIdsByCode.get("4300"), costAccountId: accountIdsByCode.get("5200") }
       ]
     });
+
+    await this.createRoomsAndMenu(tx, property.id, restaurantOutletId!, accountIdsByCode);
 
     await tx.inventoryLocation.createMany({
       data: storeAccess.map((store) => ({
@@ -201,6 +206,56 @@ export class SetupService {
         newValue: { hotel: hotelName, adminUser: adminEmail, currency: dto.currencyCode }
       }
     });
+  }
+
+  // Njiro Legacy rooms and restaurant menu (TSh and USD prices), see default-catalog.ts.
+  private async createRoomsAndMenu(
+    tx: Prisma.TransactionClient,
+    propertyId: string,
+    restaurantOutletId: string,
+    accountIdsByCode: Map<string, string>
+  ) {
+    const roomType = await tx.roomType.create({ data: { propertyId, ...defaultRoomType, baseRate: 0 } });
+    for (const floorDefinition of defaultRoomFloors) {
+      const floor = await tx.floor.create({
+        data: { propertyId, name: floorDefinition.name, sortOrder: floorDefinition.sortOrder }
+      });
+      await tx.room.createMany({
+        data: floorDefinition.rooms.map((roomNumber) => ({ propertyId, roomTypeId: roomType.id, floorId: floor.id, roomNumber }))
+      });
+    }
+
+    for (const section of defaultMenu) {
+      const category = await tx.productCategory.create({
+        data: {
+          propertyId,
+          name: section.category,
+          revenueAccountId: accountIdsByCode.get("4200"),
+          costAccountId: accountIdsByCode.get(section.category === "Hot Beverages" ? "5200" : "5100")
+        }
+      });
+      for (const [index, [name, priceTzs, priceUsd]] of section.items.entries()) {
+        const sku = menuSku(section, index);
+        await tx.product.create({
+          data: {
+            propertyId,
+            categoryId: category.id,
+            name,
+            sku,
+            variants: {
+              create: {
+                name: "Standard",
+                sku,
+                basePrice: priceTzs,
+                outletProducts: {
+                  create: { outletId: restaurantOutletId, price: priceTzs, priceUsd, available: true }
+                }
+              }
+            }
+          }
+        });
+      }
+    }
   }
 }
 
