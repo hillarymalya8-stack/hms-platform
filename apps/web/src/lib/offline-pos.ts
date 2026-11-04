@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api-client";
+import { readSession } from "@/lib/auth";
 import type { SaleCurrency } from "@/lib/currency";
 
 export type OfflineSaleStatus = "QUEUED" | "SYNCING" | "SYNCED" | "CONFLICT";
@@ -39,6 +40,10 @@ export type OfflineSale = {
   createdAt: string;
   syncedAt?: string;
   syncAttempts: number;
+  // Staff member signed in when the sale was rung up offline. The server records the seller from the
+  // session that syncs it, so a queued sale only syncs while that same person is signed in.
+  soldByUserId?: string;
+  soldByName?: string;
   lines: OfflineSaleLine[];
 };
 
@@ -97,9 +102,14 @@ export function saveOfflineSales(sales: OfflineSale[]) {
   notifyQueueChanged();
 }
 
-export function enqueueOfflineSale(sale: Omit<OfflineSale, "id" | "status" | "createdAt" | "syncAttempts">) {
+export function enqueueOfflineSale(
+  sale: Omit<OfflineSale, "id" | "status" | "createdAt" | "syncAttempts" | "soldByUserId" | "soldByName">
+) {
+  const sessionUser = readSession()?.user;
   const offlineSale: OfflineSale = {
     ...sale,
+    soldByUserId: sessionUser?.id,
+    soldByName: sessionUser?.fullName,
     id: createLocalId("offline-sale"),
     status: "QUEUED",
     createdAt: new Date().toISOString(),
@@ -120,9 +130,15 @@ export async function syncQueuedOfflineSales() {
   const queue = readOfflineSales();
   let synced = 0;
   let conflicts = 0;
+  const currentUserId = readSession()?.user.id;
+  const waitingFor = new Set<string>();
 
   for (const sale of queue) {
     if (sale.status !== "QUEUED") continue;
+    if (sale.soldByUserId && sale.soldByUserId !== currentUserId) {
+      waitingFor.add(sale.soldByName ?? "the cashier who made the sale");
+      continue;
+    }
 
     updateOfflineSale(sale.id, {
       status: "SYNCING",
@@ -144,7 +160,7 @@ export async function syncQueuedOfflineSales() {
   }
 
   const remaining = readOfflineSales().filter((sale) => sale.status === "QUEUED" || sale.status === "CONFLICT").length;
-  return { synced, conflicts, remaining };
+  return { synced, conflicts, remaining, waitingFor: [...waitingFor] };
 }
 
 export function saveCachedPosCatalog(catalog: CachedPosCatalog) {

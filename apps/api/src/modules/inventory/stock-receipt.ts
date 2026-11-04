@@ -1,4 +1,5 @@
 import { InventoryMovementStatus, InventoryMovementType, Prisma } from "@prisma/client";
+import { lockBalance, recordStockMovementAudit, StockActor, StockAuditAction } from "./stock-ledger";
 
 export type StockReceiptInput = {
   propertyId: string;
@@ -10,6 +11,10 @@ export type StockReceiptInput = {
   sourceType: string;
   sourceId?: string | null;
   journalEntryId?: string | null;
+  // Logged-in user posting the receipt; recorded on the movement and in the audit trail.
+  actor: StockActor;
+  reason?: string | null;
+  auditAction?: StockAuditAction;
 };
 
 /**
@@ -21,7 +26,7 @@ export type StockReceiptInput = {
 export async function applyStockReceipt(tx: Prisma.TransactionClient, input: StockReceiptInput) {
   const { itemId, locationId, quantity, unitCost } = input;
 
-  await tx.$executeRaw`SELECT 1 FROM inventory_balances WHERE item_id = ${itemId}::uuid AND location_id = ${locationId}::uuid FOR UPDATE`;
+  await lockBalance(tx, itemId, locationId);
 
   const existingBalance = await tx.inventoryBalance.findUnique({
     where: { itemId_locationId: { itemId, locationId } }
@@ -43,6 +48,10 @@ export async function applyStockReceipt(tx: Prisma.TransactionClient, input: Sto
       locationId,
       quantityOnHand: quantity,
       averageCost: unitCost
+    },
+    include: {
+      item: true,
+      location: true
     }
   });
 
@@ -60,8 +69,26 @@ export async function applyStockReceipt(tx: Prisma.TransactionClient, input: Sto
       unitCost,
       totalCost: receiptValue,
       businessDate: input.businessDate,
-      postedAt: new Date()
+      postedAt: new Date(),
+      performedByUserId: input.actor.userId,
+      performedByName: input.actor.name,
+      reason: input.reason?.trim() || null,
+      toQuantityBefore: currentQuantity,
+      toQuantityAfter: balance.quantityOnHand
+    },
+    include: {
+      item: true,
+      fromLocation: true,
+      toLocation: true
     }
+  });
+
+  await recordStockMovementAudit(tx, input.actor, {
+    action: input.auditAction ?? "stock_receipt",
+    propertyId: input.propertyId,
+    movement,
+    item: balance.item,
+    to: balance.location
   });
 
   return { balance, movement, receiptValue };

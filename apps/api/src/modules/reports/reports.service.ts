@@ -144,6 +144,7 @@ export class ReportsService {
 
     const outletTotals = new Map<string, Prisma.Decimal>();
     const paymentTotals = new Map<string, Prisma.Decimal>();
+    const sellerTotals = new Map<string, { name: string; orders: number; amount: Prisma.Decimal }>();
     let grossSales = new Prisma.Decimal(0);
     let paidSales = new Prisma.Decimal(0);
     let taxTotal = new Prisma.Decimal(0);
@@ -160,6 +161,11 @@ export class ReportsService {
         paidSales = paidSales.plus(paidTotal);
         taxTotal = taxTotal.plus(order.taxTotal);
         outletTotals.set(order.outlet.name, (outletTotals.get(order.outlet.name) ?? new Prisma.Decimal(0)).plus(order.grandTotal));
+        const sellerKey = order.createdByUserId ?? "not-recorded";
+        const seller = sellerTotals.get(sellerKey) ?? { name: order.createdByName ?? NOT_RECORDED, orders: 0, amount: new Prisma.Decimal(0) };
+        seller.orders += 1;
+        seller.amount = seller.amount.plus(order.grandTotal);
+        sellerTotals.set(sellerKey, seller);
       }
 
       for (const payment of order.payments) {
@@ -183,9 +189,15 @@ export class ReportsService {
         grandTotal: money(order.grandTotal),
         paidTotal: money(paidTotal),
         createdAt: order.createdAt,
+        // Original seller; unchanged when someone else edits the order or collects payment.
+        soldBy: order.createdByName ?? NOT_RECORDED,
+        lastEditedBy: order.lastEditedAt ? order.lastEditedByName ?? NOT_RECORDED : null,
+        voidedBy: order.status === PosOrderStatus.VOID ? order.voidedByName ?? NOT_RECORDED : null,
+        voidReason: order.voidReason,
         payments: order.payments
           .filter((payment) => payment.status === PaymentStatus.COMPLETED)
           .map((payment) => ({
+            collectedBy: payment.collectedByName ?? NOT_RECORDED,
             method: payment.paymentMethod,
             amount: money(payment.amount),
             receiptNumber: payment.systemReceiptNumber,
@@ -212,6 +224,9 @@ export class ReportsService {
       },
       outletTotals: [...outletTotals.entries()].map(([name, amount]) => ({ name, amount: money(amount) })),
       paymentTotals: [...paymentTotals.entries()].map(([method, amount]) => ({ method, amount: money(amount) })),
+      sellerTotals: [...sellerTotals.values()]
+        .sort((a, b) => b.amount.comparedTo(a.amount))
+        .map((seller) => ({ name: seller.name, orders: seller.orders, amount: money(seller.amount) })),
       rows
     };
   }
@@ -234,6 +249,8 @@ function parseReportDate(value?: string) {
 
   return date;
 }
+
+const NOT_RECORDED = "Not recorded";
 
 function money(value: Prisma.Decimal | number | string) {
   return new Prisma.Decimal(value).toFixed(2);

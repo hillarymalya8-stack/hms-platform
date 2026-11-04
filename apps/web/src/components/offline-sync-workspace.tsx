@@ -195,10 +195,13 @@ export function OfflineSyncWorkspace() {
     setQueue(nextQueue);
     setTerminals((current) => applyQueueDepth(current, nextQueue));
     addEvent("Queued sales sync attempted", `${result.synced} synced, ${result.conflicts} need review, ${result.remaining} pending.`);
+    const waiting = result.waitingFor.length
+      ? ` Sales rung up by ${result.waitingFor.join(", ")} sync when they sign in, so the sale stays under their name.`
+      : "";
     setMessage(
-      result.conflicts
+      (result.conflicts
         ? `${result.synced} sales synced. ${result.conflicts} need review.`
-        : `${result.synced} sales synced. ${result.remaining} still pending.`
+        : `${result.synced} sales synced. ${result.remaining} still pending.`) + waiting
     );
   }
 
@@ -370,6 +373,7 @@ export function OfflineSyncWorkspace() {
                       <div>
                         <p className="font-bold">{sale.localOrderNumber}</p>
                         <p className="text-muted-foreground">{terminal?.name ?? sale.terminalName} - {sale.paymentMethod}</p>
+                        <p className="text-xs text-muted-foreground">Sold by {sale.soldByName ?? "Not recorded"}</p>
                       </div>
                       <Badge tone={sale.status === "SYNCED" ? "success" : sale.status === "CONFLICT" ? "warning" : sale.status === "SYNCING" ? "primary" : "neutral"}>
                         {sale.status}

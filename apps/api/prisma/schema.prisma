@@ -867,6 +867,15 @@ model PosOrder {
   idempotencyKey     String?        @map("idempotency_key")
   voidReason         String?        @map("void_reason")
   voidedAt           DateTime?      @map("voided_at")
+  // Staff attribution, always taken from the logged-in session (never from the request body).
+  // Names are snapshots so history stays readable if an account is later renamed or disabled.
+  createdByUserId    String?        @map("created_by_user_id") @db.Uuid
+  createdByName      String?        @map("created_by_name")
+  lastEditedByUserId String?        @map("last_edited_by_user_id") @db.Uuid
+  lastEditedByName   String?        @map("last_edited_by_name")
+  lastEditedAt       DateTime?      @map("last_edited_at")
+  voidedByUserId     String?        @map("voided_by_user_id") @db.Uuid
+  voidedByName       String?        @map("voided_by_name")
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
 
@@ -883,6 +892,7 @@ model PosOrder {
   @@unique([propertyId, idempotencyKey])
   @@index([propertyId, outletId, status])
   @@index([tableId, status])
+  @@index([propertyId, createdByUserId, createdAt])
   @@map("pos_orders")
 }
 
@@ -923,6 +933,11 @@ model Payment {
   externalReference     String?       @map("external_reference")
   idempotencyKey        String?       @map("idempotency_key")
   paymentMetadata       Json          @default("{}") @map("payment_metadata")
+  collectedByUserId     String?       @map("collected_by_user_id") @db.Uuid
+  collectedByName       String?       @map("collected_by_name")
+  voidedByUserId        String?       @map("voided_by_user_id") @db.Uuid
+  voidedByName          String?       @map("voided_by_name")
+  voidedAt              DateTime?     @map("voided_at")
   createdAt             DateTime      @default(now()) @map("created_at")
   updatedAt             DateTime      @updatedAt @map("updated_at")
 
@@ -1012,6 +1027,14 @@ model InventoryMovement {
   totalCost      Decimal                 @default(0) @map("total_cost") @db.Decimal(18, 4)
   businessDate   DateTime                @map("business_date") @db.Date
   postedAt       DateTime?               @map("posted_at")
+  performedByUserId  String?              @map("performed_by_user_id") @db.Uuid
+  performedByName    String?              @map("performed_by_name")
+  reason             String?
+  // Balances immediately before and after this movement at the source (from) and target (to) stores.
+  fromQuantityBefore Decimal?             @map("from_quantity_before") @db.Decimal(18, 4)
+  fromQuantityAfter  Decimal?             @map("from_quantity_after") @db.Decimal(18, 4)
+  toQuantityBefore   Decimal?             @map("to_quantity_before") @db.Decimal(18, 4)
+  toQuantityAfter    Decimal?             @map("to_quantity_after") @db.Decimal(18, 4)
   createdAt      DateTime                @default(now()) @map("created_at")
   updatedAt      DateTime                @updatedAt @map("updated_at")
 
@@ -1024,6 +1047,8 @@ model InventoryMovement {
   @@index([propertyId, businessDate, status])
   @@index([itemId, businessDate])
   @@index([sourceType, sourceId])
+  @@index([propertyId, createdAt])
+  @@index([performedByUserId, createdAt])
   @@map("inventory_movements")
 }
 
@@ -1254,6 +1279,11 @@ model AuditLog {
   newValue       Json?    @map("new_value")
   ipAddress      String?  @map("ip_address")
   userAgent      String?  @map("user_agent")
+  // Snapshot of the staff name at the time of the action, so disabled accounts stay readable.
+  actorName      String?  @map("actor_name")
+  itemId         String?  @map("item_id") @db.Uuid
+  itemName       String?  @map("item_name")
+  summary        String?
   createdAt      DateTime @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1263,6 +1293,8 @@ model AuditLog {
   @@index([propertyId, module, createdAt])
   @@index([recordType, recordId])
   @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([itemId, createdAt])
   @@map("audit_logs")
 }
 

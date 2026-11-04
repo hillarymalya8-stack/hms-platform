@@ -1,0 +1,100 @@
+STAFF ATTRIBUTION AND AUDIT TRAIL UPDATE
+
+What changed
+1. Sales and receipts
+   - Every new POS order records the logged-in user as the seller ("Sold by").
+   - Payments record who collected them. Edits record who last edited the order
+     and when. Voids record who voided the order and its payments.
+   - The original seller never changes when someone else edits the order or
+     takes the payment.
+   - "Sold by" appears on the POS terminal receipts list and printed receipt.
+     "Payment taken by" is added when a different person took the payment. It
+     also appears on Open Checks, Paid Sales and Voided orders in the POS
+     screen, and on the daily POS report and its printout. The report also has
+     a new "By Seller" total.
+   - The Njiro Legacy receipt and invoice headers, POS item descriptions on room
+     charges, totals, balances and payments are unchanged.
+
+2. Stock tracking
+   - Every stock receipt, purchase-order receipt, issue, transfer, adjustment,
+     POS bar deduction and POS edit/void return records the logged-in user,
+     the reason, and the store quantity before and after. Transfers record
+     both stores.
+   - New "Adjust Stock" task in Inventory. The reason is required by both the
+     screen and the API. Stock cannot be adjusted below zero.
+   - New "Edit Item" task in Inventory for name, unit and alert level. The item
+     code (SKU) cannot be changed because POS bar sales are matched to it.
+   - The supplier document typed on a manual receipt is now saved as the reason.
+     Before this update it was discarded.
+   - POS bar deductions stay linked to their order. Edits and voids return
+     exactly what that order took. A repeated (idempotent) sale does not post
+     stock twice.
+
+3. Audit Trail
+   - Search, filters (staff member, date range, stock item, action) and
+     Newer/Older pages.
+   - Staff and item names are readable. Older entries are resolved to order
+     numbers, receipt numbers and item names where possible.
+   - Staff names are stored with each entry. Disabled accounts stay readable,
+     are marked "(disabled)" and can still be chosen in the staff filter.
+   - Only users with "View audit trail" can open it (by default Super Admin,
+     General Manager and Accountant). The API has no route to change audit
+     entries. The database rejects any edit, delete or truncate of audit rows.
+   - Entries are attributed to the signed-in session. Requests cannot name
+     another person as the actor: the API rejects such fields.
+
+Where managers find it
+- Audit Trail: the new "Audit Trail" link in the left menu (/audit-trail). It
+  is also at the bottom of Administration.
+- Stock history: Inventory > Stock History. It has filters for item, store,
+  action, staff and dates, plus pages. Staff only see stores they have access
+  to.
+- Sales by staff: Reports > POS report of the day, in the "Sold by" column
+  and the "By Seller" totals. Also in POS > Paid Sales / Voided orders.
+
+Older records ("Not recorded")
+- Older orders, payments, edits and voids are filled in only from the audit
+  entry the system already wrote for that exact record. That entry came from
+  the logged-in session, so the name is reliable.
+- Older stock movements had no staff recorded, so they show "Not recorded".
+  Their before/after quantities also show "Not recorded". Nothing is guessed.
+
+Offline POS sales
+- An offline sale remembers who rang it up. The server records the seller from
+  the signed-in session at sync time, so a queued sale only syncs while that
+  same person is signed in. Sales queued by someone else wait, and the sync
+  message names who needs to sign in. Sales queued before this update sync as
+  before, under whoever is signed in.
+
+Migration
+- New migration: 202611060001_staff_attribution_audit (in
+  netlify/database/migrations and the identical copy in apps/api/prisma/migrations).
+- On Netlify it is applied automatically on the next deploy. On a standalone
+  server, `npm run start:api` runs `prisma migrate deploy` before starting.
+- What it does: it adds nullable columns and indexes, back-fills from existing
+  audit entries, and adds two audit_logs triggers (block changes, fill in the
+  staff name). It does not change any existing amount, balance, quantity or
+  description. A rehearsal compared those before and after the migration and
+  they were identical.
+- Rollback note: the columns are additive and the old code ignores them. To
+  allow edits to audit_logs again you would need a new migration that drops
+  the "audit_logs_protect_rows" and "audit_logs_protect_truncate" triggers.
+
+Validation
+- API and web TypeScript checks passed. 18 API unit tests passed (3 new).
+- 57 end-to-end checks passed against a local PostgreSQL. That database was
+  loaded with records made by the previous version, then migrated. The checks
+  covered: sales, idempotent replays, edits, payments, voids, bar stock
+  deductions and returns, receipts, purchase-order receipts, issues,
+  transfers, adjustments with and without a reason, item edits, store access,
+  audit permissions, filters, search, dates, pagination, disabled staff, the
+  daily report and back-filled older records.
+- The changed pages compiled and loaded in the Next.js dev server.
+
+Not tested
+- No live/production database, physical printer or real guest payment.
+- The screens were not clicked through in a browser (no browser was available).
+- Room-charge sales and their voids were not run end to end (the seed data has
+  no checked-in guest). That code path only gained the staff fields, and the
+  room-charge description logic is unchanged.
+- Offline queueing and sync with two different staff members on one device.
