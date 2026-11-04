@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import { normalizeMenuDays, permissions, roleAccessLevels, storeAccess } from "@hms/shared";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { AuthService } from "../auth/auth.service";
-import { barDrinkSku, barDrinksMenu, dailyBuffetMenu, dailyMenuSku, defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
+import { barDrinkSku, barDrinksMenu, dailyBuffetMenu, kitchenStoreItems, dailyMenuSku, defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
 import { defaultChartOfAccounts, defaultNumberingRules, defaultStoreTypes } from "./default-setup";
 import { RunSetupDto } from "./dto/run-setup.dto";
 
@@ -196,6 +196,15 @@ export class SetupService {
         locationType: defaultStoreTypes[store.locationCode]
       }))
     });
+
+    const kitchen = await tx.inventoryLocation.findUniqueOrThrow({
+      where: { propertyId_code: { propertyId: property.id, code: "KITCHEN" } }
+    });
+    for (const [sku, name, unitOfMeasure] of kitchenStoreItems) {
+      await tx.inventoryItem.create({
+        data: { propertyId: property.id, sku, name, unitOfMeasure, balances: { create: { locationId: kitchen.id } } }
+      });
+    }
 
     await tx.auditLog.create({
       data: {
