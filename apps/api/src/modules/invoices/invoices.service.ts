@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { FolioItemType, Prisma } from "@prisma/client";
 import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
+import { posChargeDescription } from "../pos/pos-charge-description";
 
 @Injectable()
 export class InvoicesService {
@@ -48,6 +49,20 @@ export class InvoicesService {
       take: 20
     });
 
+    // Resolve older generic charges without changing saved amounts or folio balances.
+    const legacyOrderIds = [...new Set(reservations.flatMap((reservation) =>
+      reservation.folios.flatMap((folio) => folio.items
+        .filter((item) => item.itemType === FolioItemType.POS_CHARGE && item.sourceId &&
+          (item.sourceType === "POS_ORDER" || item.sourceType === "POS_ORDER_VOID") &&
+          /^(Void )?POS order /i.test(item.description))
+        .map((item) => item.sourceId!))
+    ))];
+    const legacyOrders = legacyOrderIds.length ? await this.prisma.posOrder.findMany({
+      where: { propertyId, id: { in: legacyOrderIds } },
+      include: { items: { include: { productVariant: { include: { product: true } } } } }
+    }) : [];
+    const legacyOrderMap = new Map(legacyOrders.map((order) => [order.id, order]));
+
     return reservations.map((reservation) => {
       const assignedRoom = reservation.reservationRooms[0] ?? null;
       const folioItems = reservation.folios.flatMap((folio) =>
@@ -57,7 +72,13 @@ export class InvoicesService {
           folioNumber: folio.folioNumber,
           itemType: item.itemType,
           sourceType: item.sourceType,
-          description: item.description,
+          description: item.sourceId && legacyOrderMap.has(item.sourceId) &&
+            item.itemType === FolioItemType.POS_CHARGE &&
+            (item.sourceType === "POS_ORDER" || item.sourceType === "POS_ORDER_VOID") &&
+            /^(Void )?POS order /i.test(item.description)
+            ? posChargeDescription(legacyOrderMap.get(item.sourceId)!.orderNumber,
+                legacyOrderMap.get(item.sourceId)!.items, item.sourceType === "POS_ORDER_VOID")
+            : item.description,
           quantity: money(item.quantity),
           unitPrice: money(item.unitPrice),
           totalAmount: money(item.totalAmount),

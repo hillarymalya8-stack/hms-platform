@@ -1,0 +1,54 @@
+NJIRO LEGACY UPDATE
+
+Changes
+- Reservation invoices and POS receipts now display Njiro Legacy,
+  phone 0677234754 and email info@njirolegacy.com.
+- New POS room charges show purchased product names, variants and quantities.
+  Example: 2 x Safari; 1 x Beef Steak (Fillet) - Order POS-2026-00001.
+- Voided room charges identify the items being reversed.
+- Older generic POS descriptions are resolved from linked orders when loading
+  reservation invoices. Missing orders retain the original description.
+- Charge amounts, payment allocation and guest balances are unchanged.
+
+BOOKINGS PAID BEFORE CHECK-IN
+
+What this version already supports
+1. Keep the booking confirmed until the guest actually arrives.
+2. At check-in choose "Yes - paid before arrival (company or guest)".
+3. Choose the meal plan, enter the actual amount already received in the stay's
+   currency, add the company if applicable and enter the payment reference.
+4. The system adds this amount as a deposit credit to the guest folio.
+5. Room and POS charges use that credit; collect any remaining balance at checkout.
+6. Do not collect or enter the same advance payment again at checkout.
+
+Example: Room charges 200,000 plus extras 30,000, with an advance payment of
+150,000, leaves 80,000 to collect. Use one currency throughout this example.
+
+Important limits of the current workflow
+- The advance credit is entered at check-in, rather than on the day payment arrives.
+- It creates a folio deposit and audit entry; it does not create a Payment record
+  or a separately numbered payment receipt for the original receipt date.
+- Reservation invoices currently show selected charges; their total does not
+  subtract deposits or settlement payments. Use the guest folio for the amount due.
+- The check-in form requires a meal plan for prepaid bookings. It has no room-only
+  prepaid option. Select the package actually agreed with the guest.
+
+Recommended next improvement (not implemented in this update)
+Add a "Record advance payment" action on confirmed reservations. Record the
+actual payment date, amount, currency, payment method, transaction reference,
+payer and a unique receipt number at the time money arrives. Show a receipt
+and payment history on the booking. Carry the existing credit into check-in
+automatically so reception cannot enter it twice. Show charges, payments and
+remaining balance separately on the final invoice. Handle cancellations,
+refunds and unused credit through an explicit recorded action.
+
+Deployment
+This is an updated source package, not a live deployment. Deploy the API and web
+app together using the existing project deployment instructions. No database
+schema change or migration was added. Test a room-charge order and its printed
+invoice against a test booking before using the updated version with guests.
+
+Validation
+- API and web TypeScript checks passed.
+- All 15 API tests passed, including the new legacy POS invoice regression test.
+- No live database, physical printer or guest payment was used in testing.

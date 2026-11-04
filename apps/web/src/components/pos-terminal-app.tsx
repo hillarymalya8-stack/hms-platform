@@ -821,7 +821,9 @@ export function PosTerminalApp() {
     openPrintWindow(
       `Receipt ${receipt.receiptNumber}`,
       `
-        <h1>Main Hotel</h1>
+        <h1>Njiro Legacy</h1>
+        <p>Phone: 0677234754</p>
+        <p>Email: info@njirolegacy.com</p>
         <p><strong>Receipt:</strong> ${escapeHtml(receipt.receiptNumber)}</p>
         <p><strong>Payment:</strong> ${escapeHtml(receipt.paymentMethod.replace("_", " "))}</p>
         ${receipt.offline ? `<p><strong>Status:</strong> ${escapeHtml(receipt.syncStatus ?? "PENDING SYNC")}</p>` : ""}

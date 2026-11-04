@@ -180,8 +180,9 @@ export function InvoiceWorkspace({
           <header>
             <div>
               <h1>Invoice</h1>
-              <p><strong>Main Hotel</strong></p>
-              <p class="muted">Printed by hotel system</p>
+              <p><strong>Njiro Legacy</strong></p>
+              <p>Phone: 0677234754</p>
+              <p>Email: info@njirolegacy.com</p>
             </div>
             <div class="right">
               <p><strong>${escapeHtml(invoiceNumber)}</strong></p>
