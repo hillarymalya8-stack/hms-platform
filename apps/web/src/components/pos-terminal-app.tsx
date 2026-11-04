@@ -278,6 +278,18 @@ export function PosTerminalApp() {
     }
   }
 
+  // Re-reads the Bar menu after a sale so drinks that just ran out of stock disappear.
+  async function refreshBarCatalog(outletId: string) {
+    const result = await apiRequest<CatalogItem[]>(`/pos/outlets/${outletId}/catalog`);
+    if (!result.ok) return;
+    const liveProducts = result.data.map(mapCatalogItem);
+    setProducts(liveProducts);
+    const cached = readCachedPosCatalog();
+    if (cached && cached.selectedOutletId === outletId) {
+      saveCachedPosCatalog({ ...cached, products: liveProducts, cachedAt: new Date().toISOString() });
+    }
+  }
+
   useEffect(() => {
     const stored = window.localStorage.getItem(preferredCurrencyKey);
     if (stored === "TZS" || stored === "USD") setSaleCurrency(stored);
@@ -576,6 +588,7 @@ export function PosTerminalApp() {
     setReceipts((current) => current.map((entry) => (entry.id === receipt.id ? { ...entry, voided: true } : entry)));
     if (isBarOutlet) {
       void loadBarLowStock();
+      void refreshBarCatalog(selectedOutletId);
     }
     if (reRing && receipt.ticketLines?.length) {
       setTicket(receipt.ticketLines);
@@ -716,6 +729,7 @@ export function PosTerminalApp() {
     setPrepSent(false);
     if (isBarOutlet) {
       void loadBarLowStock();
+      void refreshBarCatalog(selectedOutletId);
     }
     setMessage(
       routedTickets.length

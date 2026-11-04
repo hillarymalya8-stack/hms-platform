@@ -1,6 +1,6 @@
 // Njiro Legacy rooms and restaurant menu, created when the hotel is first set up.
 // The same data is added to an already set-up hotel by the
-// 202611030001_njiro_rooms_and_menu, 202611030002_buffet_menu_item and 202611030003_daily_buffet_menu
+// 202611030001_njiro_rooms_and_menu, 202611030002_buffet_menu_item, 202611030003_daily_buffet_menu and 202611040001_bar_drinks_stock
 // database migrations — keep them in step.
 
 // Room rates start at 0 and are set from the admin workspace (room type rates).
@@ -246,5 +246,141 @@ export const dailyBuffetMenu: readonly DailyMenuSection[] = [
 ];
 
 export function dailyMenuSku(section: DailyMenuSection, index: number) {
+  return `${section.skuPrefix}-${String(index + 1).padStart(2, "0")}`;
+}
+
+// Njiro Legacy bar drinks (TSh prices). Each drink is a Bar menu item and a stock item in the
+// Bar Store with the same code, so bar sales relieve stock and drinks with no stock are hidden
+// from the Bar menu. Added to already set-up hotels by the 202611040001_bar_drinks_stock migration.
+type BarDrink = readonly [name: string, priceTzs: number];
+type BarSection = { category: string; skuPrefix: string; items: readonly BarDrink[] };
+
+export const barDrinksMenu: readonly BarSection[] = [
+  {
+    category: "Beers",
+    skuPrefix: "BEER",
+    items: [
+      ["Safari", 5000],
+      ["Castle Lite", 5000],
+      ["Kilimanjaro", 5000],
+      ["Serengeti Lager Kubwa", 5000],
+      ["Serengeti Lite", 5000],
+      ["Heineken Kubwa", 5000],
+      ["Windhoek", 5000],
+      ["Desperados", 5000]
+    ]
+  },
+  {
+    category: "Ciders & Alcoholic Coolers",
+    skuPrefix: "CIDR",
+    items: [
+      ["Savannah Dry", 5000],
+      ["Savanna", 5000],
+      ["Smirnoff Black Ice", 5000]
+    ]
+  },
+  {
+    category: "Spirits",
+    skuPrefix: "SPRT",
+    items: [
+      ["Amarula", 50000],
+      ["Absolut Vodka Ndogo", 20000],
+      ["Ballantine's", 20000],
+      ["Campari", 25000],
+      ["Captain Morgan", 20000],
+      ["Gordon's Ndogo", 20000],
+      ["Grant's Ndogo", 20000],
+      ["J&B Ndogo", 20000],
+      ["Jack Daniel's", 50000],
+      ["Konyagi Kubwa", 15000],
+      ["Konyagi Ndogo", 10000],
+      ["K-Vant Kubwa", 15000],
+      ["K-Vant Ndogo", 10000],
+      ["Smirnoff Vodka Ndogo", 15000],
+      ["Viceroy", 15000],
+      ["Hanson Choice", 10000],
+      ["Gilbey's", 15000],
+      ["Diamond Rock", 15000],
+      ["Bongo Don Ndogo", 10000],
+      ["Black & White Ndogo", 20000],
+      ["Jameson Ndogo", 45000],
+      ["Valuer Ndogo", 15000],
+      ["Jaguar Master", 50000],
+      ["Hennessy", 150000]
+    ]
+  },
+  {
+    category: "Wines",
+    skuPrefix: "WINE",
+    items: [
+      ["Francos Wine", 30000],
+      ["Dodoma Wine", 30000],
+      ["Dompo", 30000],
+      ["Drostdy-Hof Red & White Ndogo", 15000],
+      ["Drostdy-Hof Red & White Kubwa", 30000],
+      ["Image Red Ndogo", 10000],
+      ["Lions Hill White & Red", 30000],
+      ["Mohans Red & White", 30000],
+      ["Pearly Bay Red & White", 30000],
+      ["Personal Red & White", 30000],
+      ["Robertson Red & White", 30000],
+      ["Serengeti Wine", 30000],
+      ["Saint Celine", 30000],
+      ["Four Cousins White & Red", 30000],
+      ["Heaven Champion", 30000]
+    ]
+  },
+  {
+    category: "Soft Drinks & Mixers",
+    skuPrefix: "SOFT",
+    items: [
+      ["Alvaro", 3000],
+      ["Grand Malt", 5000],
+      ["Coca Zero", 3000],
+      ["Pepsi Zero", 3000],
+      ["Bitter Lemon", 3000],
+      ["Coca-Cola", 3000],
+      ["Fanta Black", 3000],
+      ["Fanta Orange", 3000],
+      ["Fanta Passion", 3000],
+      ["Fanta Pineapple", 3000],
+      ["Ginger Ale", 3000],
+      ["Soda Water", 3000],
+      ["Tonic Water", 3000],
+      ["Sparletta", 3000],
+      ["Sprite", 3000],
+      ["Stone Tangawizi", 3000]
+    ]
+  },
+  {
+    category: "Energy Drinks",
+    skuPrefix: "ENRG",
+    items: [
+      ["Red Bull", 5000],
+      ["Switch", 8000]
+    ]
+  },
+  {
+    category: "Juice",
+    skuPrefix: "JUIC",
+    items: [["Azam Juice", 5000]]
+  },
+  {
+    category: "Water",
+    skuPrefix: "WATR",
+    items: [
+      ["Sparkling Water", 5000],
+      ["Maji Kubwa", 5000],
+      ["Maji Ndogo", 3000]
+    ]
+  },
+  {
+    category: "Hot Drinks",
+    skuPrefix: "HDRK",
+    items: [["Coffee", 2000]]
+  }
+];
+
+export function barDrinkSku(section: BarSection, index: number) {
   return `${section.skuPrefix}-${String(index + 1).padStart(2, "0")}`;
 }
