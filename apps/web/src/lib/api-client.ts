@@ -42,7 +42,8 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     if (!response.ok) {
       return {
         ok: false,
-        error: body?.message ?? "Request failed."
+        // Validation failures arrive as a list of messages; show them as one readable sentence.
+        error: Array.isArray(body?.message) ? body.message.join(". ") : (body?.message ?? "Request failed.")
       };
     }
 
