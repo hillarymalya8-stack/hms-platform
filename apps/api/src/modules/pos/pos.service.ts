@@ -44,9 +44,9 @@ export class PosService {
     });
   }
 
-  listCatalog(user: UserContext, outletId: string) {
+  async listCatalog(user: UserContext, outletId: string) {
     const propertyId = this.requireProperty(user);
-    return this.prisma.outletProduct.findMany({
+    const entries = await this.prisma.outletProduct.findMany({
       where: {
         outletId,
         available: true,
@@ -74,6 +74,39 @@ export class PosService {
           }
         }
       }
+    });
+
+    const outlet = await this.prisma.posOutlet.findFirst({ where: { id: outletId, propertyId } });
+    if (outlet?.outletType !== PosOutletType.BAR) {
+      return entries;
+    }
+    return this.hideOutOfStockBarItems(propertyId, entries);
+  }
+
+  // Bar menu items linked to a stock item (same matching as deductBarStock) are hidden while
+  // the Bar Store holds none of it. Items without a stock item (e.g. cocktails) always show.
+  private async hideOutOfStockBarItems<
+    T extends { productVariant: { sku: string; product: { sku: string; name: string } } }
+  >(propertyId: string, entries: T[]) {
+    const [items, balances] = await Promise.all([
+      this.prisma.inventoryItem.findMany({ where: { propertyId, active: true } }),
+      this.prisma.inventoryBalance.findMany({
+        where: { item: { propertyId }, location: { propertyId, code: "BAR", active: true } }
+      })
+    ]);
+    const bySku = new Map(items.map((item) => [item.sku.toUpperCase(), item]));
+    const byName = new Map(items.map((item) => [item.name.trim().toLowerCase(), item]));
+    const quantityByItem = new Map(balances.map((balance) => [balance.itemId, balance.quantityOnHand]));
+
+    return entries.filter((entry) => {
+      const variant = entry.productVariant;
+      const item =
+        bySku.get(variant.sku.toUpperCase()) ??
+        bySku.get(variant.product.sku.toUpperCase()) ??
+        byName.get(variant.product.name.trim().toLowerCase());
+      if (!item) return true;
+      const quantity = quantityByItem.get(item.id);
+      return quantity !== undefined && quantity.gt(0);
     });
   }
 

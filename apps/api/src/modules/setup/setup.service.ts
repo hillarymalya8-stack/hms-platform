@@ -1,12 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { ConflictException, ForbiddenException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PosOutletType, Prisma, RoleScope } from "@prisma/client";
+import { PosOutletType, Prisma, ProductType, RoleScope } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { normalizeMenuDays, permissions, roleAccessLevels, storeAccess } from "@hms/shared";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { AuthService } from "../auth/auth.service";
-import { dailyBuffetMenu, dailyMenuSku, defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
+import { barDrinkSku, barDrinksMenu, dailyBuffetMenu, dailyMenuSku, defaultMenu, defaultRoomFloors, defaultRoomType, menuSku } from "./default-catalog";
 import { defaultChartOfAccounts, defaultNumberingRules, defaultStoreTypes } from "./default-setup";
 import { RunSetupDto } from "./dto/run-setup.dto";
 
@@ -157,6 +157,7 @@ export class SetupService {
       { name: "Bar", type: PosOutletType.BAR, revenue: "4300", device: "BAR-POS-01", drawer: "Bar Drawer" }
     ];
     let restaurantOutletId: string | undefined;
+    let barOutletId: string | undefined;
     for (const outlet of outlets) {
       const created = await tx.posOutlet.create({
         data: {
@@ -168,6 +169,7 @@ export class SetupService {
         }
       });
       if (outlet.type === PosOutletType.RESTAURANT) restaurantOutletId = created.id;
+      if (outlet.type === PosOutletType.BAR) barOutletId = created.id;
       const terminal = await tx.posTerminal.create({
         data: { outletId: created.id, name: `${outlet.name} POS 01`, deviceIdentifier: outlet.device }
       });
@@ -184,6 +186,7 @@ export class SetupService {
     });
 
     await this.createRoomsAndMenu(tx, property.id, restaurantOutletId!, accountIdsByCode);
+    await this.createBarDrinks(tx, property.id, barOutletId!, accountIdsByCode);
 
     await tx.inventoryLocation.createMany({
       data: storeAccess.map((store) => ({
@@ -206,6 +209,47 @@ export class SetupService {
         newValue: { hotel: hotelName, adminUser: adminEmail, currency: dto.currencyCode }
       }
     });
+  }
+
+  // Njiro Legacy bar drinks: a stock item and a stock-tracked Bar menu item per drink (same code).
+  private async createBarDrinks(
+    tx: Prisma.TransactionClient,
+    propertyId: string,
+    barOutletId: string,
+    accountIdsByCode: Map<string, string>
+  ) {
+    for (const section of barDrinksMenu) {
+      const category = await tx.productCategory.create({
+        data: {
+          propertyId,
+          name: section.category,
+          revenueAccountId: accountIdsByCode.get("4300"),
+          costAccountId: accountIdsByCode.get("5200")
+        }
+      });
+      for (const [index, [name, priceTzs]] of section.items.entries()) {
+        const sku = barDrinkSku(section, index);
+        await tx.inventoryItem.create({ data: { propertyId, sku, name, unitOfMeasure: "PCS" } });
+        await tx.product.create({
+          data: {
+            propertyId,
+            categoryId: category.id,
+            name,
+            sku,
+            productType: ProductType.STOCKED,
+            stockTracked: true,
+            variants: {
+              create: {
+                name: "Standard",
+                sku,
+                basePrice: priceTzs,
+                outletProducts: { create: { outletId: barOutletId, price: priceTzs, available: true } }
+              }
+            }
+          }
+        });
+      }
+    }
   }
 
   // Njiro Legacy rooms and restaurant menu (TSh and USD prices), see default-catalog.ts.
