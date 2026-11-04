@@ -525,6 +525,29 @@ export function PosTerminalApp() {
     setMessage(`Selling in ${currencyLabel(next)}. Prices switched to the ${currencyLabel(next)} price list.`);
   }
 
+  // A room charge must be in the folio's currency, so picking a room switches the
+  // sale to match. The device's preferred currency is left untouched.
+  function chooseChargeableRoom(folioId: string) {
+    setSelectedFolioId(folioId);
+    const room = chargeableRooms.find((entry) => entry.folio.id === folioId);
+    if (!room) return;
+
+    const folioCurrency: SaleCurrency = room.folio.currencyCode === "USD" ? "USD" : "TZS";
+    if (folioCurrency === saleCurrency) return;
+
+    const label = currencyLabel(folioCurrency);
+    const unpriced = ticket.filter((line) => priceIn(line.product, folioCurrency) === null);
+    if (unpriced.length > 0) {
+      setMessage(
+        `Room ${room.roomNumber}'s folio is in ${label}, but ${unpriced.map((line) => line.product.name).join(", ")} ${unpriced.length === 1 ? "has" : "have"} no ${label} price. Remove ${unpriced.length === 1 ? "it" : "them"} or add the price in Menu management.`
+      );
+      return;
+    }
+
+    setSaleCurrency(folioCurrency);
+    setMessage(`Room ${room.roomNumber}'s folio is in ${label}. Sale switched to ${label} prices.`);
+  }
+
   function addProduct(product: TerminalProduct) {
     if (priceIn(product, saleCurrency) === null) {
       setMessage(`${product.name} has no ${currencyLabel(saleCurrency)} price. Switch to TSh or add a USD price in Menu management.`);
@@ -1220,7 +1243,7 @@ export function PosTerminalApp() {
                     </div>
                     <select
                       value={selectedFolioId}
-                      onChange={(event) => setSelectedFolioId(event.target.value)}
+                      onChange={(event) => chooseChargeableRoom(event.target.value)}
                       className="h-11 w-full rounded border border-input bg-background px-3 text-sm font-semibold outline-none transition-colors focus:border-primary"
                     >
                       <option value="">{loadingRooms ? "Loading occupied rooms..." : "Choose room to charge"}</option>
