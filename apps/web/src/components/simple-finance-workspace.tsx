@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { InvoiceWorkspace } from "@/components/invoice-workspace";
+import { FinanceDaySales } from "@/components/finance-day-sales";
 
 type Balance = {
   rows: Array<{
@@ -237,9 +238,11 @@ export function SimpleFinanceWorkspace({ active = true }: { active?: boolean }) 
       <p role="status" aria-live="polite" className="rounded border border-border bg-white p-3 text-sm">
         {message}
       </p>
+      <FinanceDaySales active={active} />
+      <h4 className="pt-2 font-bold">Accounting entries</h4>
       <p className="text-sm text-muted-foreground">
-        These totals include approved finance entries. Some Front Office and POS activity still needs an accounting
-        entry. Record guest payments in Front Office and sales in POS.
+        The totals below include approved finance entries only. Room and POS sales appear in Day sales above even
+        before an accounting entry is recorded.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button

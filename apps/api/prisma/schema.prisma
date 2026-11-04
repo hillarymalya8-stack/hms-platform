@@ -242,6 +242,7 @@ model Property {
   financialPeriods       FinancialPeriod[]
   floors                 Floor[]
   folios                 Folio[]
+  frontOfficeExpenses    FrontOfficeExpense[]
   guests                 Guest[]
   inventoryItems         InventoryItem[]
   inventoryLocations     InventoryLocation[]
@@ -1419,4 +1420,28 @@ model SystemSecret {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("system_secrets")
+}
+
+// Day expenses noted by reception (e.g. petty cash spent at the front desk). They are visible in
+// Finance next to the day's room and POS sales. Removed entries are kept (voided) for audit.
+model FrontOfficeExpense {
+  id                 String    @id @default(uuid()) @db.Uuid
+  propertyId         String    @map("property_id") @db.Uuid
+  expenseDate        DateTime  @map("expense_date") @db.Date
+  description        String
+  amount             Decimal   @db.Decimal(18, 4)
+  currencyCode       String    @default("TZS") @map("currency_code")
+  paidBy             String?   @map("paid_by")
+  recordedByUserId   String?   @map("recorded_by_user_id") @db.Uuid
+  recordedByName     String?   @map("recorded_by_name")
+  voidedAt           DateTime? @map("voided_at")
+  voidedByUserId     String?   @map("voided_by_user_id") @db.Uuid
+  voidedByName       String?   @map("voided_by_name")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, expenseDate])
+  @@map("front_office_expenses")
 }

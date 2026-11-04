@@ -12,14 +12,24 @@
   node_bundler = "esbuild"
 
 # The HMS API (NestJS + Prisma) is compiled with tsc during the build; nft keeps its decorator
-# metadata intact and ships the Prisma query engine built for the Netlify Functions runtime.
+# metadata intact and ships only the Prisma query engine built for the Netlify Functions runtime
+# (rhel-openssl-3.0.x); other engines, type files and non-Postgres runtimes are left out to keep
+# the upload small.
 [functions.api]
   node_bundler = "nft"
   included_files = [
     "apps/api/dist/**",
     "node_modules/.prisma/client/**",
     "!node_modules/.prisma/client/libquery_engine-debian-*",
-    "node_modules/@prisma/client/**"
+    "!node_modules/.prisma/client/libquery_engine-rhel-openssl-1.0.x*",
+    "!node_modules/.prisma/client/**/*.d.ts",
+    "!node_modules/.prisma/client/deno/**",
+    "node_modules/@prisma/client/**",
+    "!node_modules/@prisma/client/**/*.d.ts",
+    "!node_modules/@prisma/client/runtime/*mysql*",
+    "!node_modules/@prisma/client/runtime/*sqlite*",
+    "!node_modules/@prisma/client/runtime/*cockroachdb*",
+    "!node_modules/@prisma/client/runtime/*sqlserver*"
   ]
 
 [[headers]]
