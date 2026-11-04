@@ -384,3 +384,36 @@ export const barDrinksMenu: readonly BarSection[] = [
 export function barDrinkSku(section: BarSection, index: number) {
   return `${section.skuPrefix}-${String(index + 1).padStart(2, "0")}`;
 }
+
+// Njiro Legacy kitchen stock items, listed in the Restaurant Store (KITCHEN) at 0 so staff can
+// receive or transfer stock into them. Added to already set-up hotels by the
+// 202611050001_kitchen_store_items migration.
+export const kitchenStoreItems: readonly (readonly [sku: string, name: string, unit: string])[] = [
+  ["KIT-01", "Chicken Steak", "PCS"],
+  ["KIT-02", "Broilers", "PCS"],
+  ["KIT-03", "Local Chicken", "PCS"],
+  ["KIT-04", "Beef Steak (Fillet)", "KG"],
+  ["KIT-05", "Goat Meat (Front Leg)", "KG"],
+  ["KIT-06", "Goat Meat (Rear Leg)", "KG"],
+  ["KIT-07", "Large Size Tilapia", "PCS"],
+  ["KIT-08", "Small Size Tilapia", "PCS"],
+  ["KIT-09", "Plantains (Mizuzu)", "PCS"],
+  ["KIT-10", "Lamb Meat", "KG"],
+  ["KIT-11", "Chicken Wings", "PCS"],
+  ["KIT-12", "Ugali Portions", "PORTION"],
+  ["KIT-13", "Rice Portions", "PORTION"],
+  ["KIT-14", "French Fries Portions", "PORTION"],
+  ["KIT-15", "Pasta", "KG"],
+  ["KIT-16", "Eggs", "PCS"],
+  ["KIT-17", "Sausages", "PCS"],
+  ["KIT-18", "Fish Fillets", "PCS"],
+  ["KIT-19", "Soup", "PORTION"],
+  ["KIT-20", "Pizza", "PCS"],
+  ["KIT-21", "Tea", "PORTION"],
+  ["KIT-22", "Coffee", "PORTION"],
+  ["KIT-23", "Ice Cream", "PORTION"],
+  ["KIT-24", "Fresh Juice", "LTR"],
+  ["KIT-25", "Cake", "PCS"],
+  ["KIT-26", "Milk", "LTR"],
+  ["KIT-27", "Salads", "PORTION"]
+];
