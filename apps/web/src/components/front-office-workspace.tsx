@@ -188,6 +188,8 @@ export function FrontOfficeWorkspace() {
   const [busy, setBusy] = useState(false);
   const [showReservation, setShowReservation] = useState(false);
   const [guestMode, setGuestMode] = useState<"new" | "existing">("new");
+  // Shown inside the reservation form: the page status line sits above the room chart, off-screen while booking.
+  const [reservationError, setReservationError] = useState("");
   const [invoiceTarget, setInvoiceTarget] = useState<{ id: string; number: string } | null>(null);
   const [checkInTarget, setCheckInTarget] = useState<CheckInTarget | null>(null);
   const [checkInForm, setCheckInForm] = useState(emptyCheckInForm);
@@ -333,12 +335,18 @@ export function FrontOfficeWorkspace() {
     setMessage("Hotel records loaded.");
   }
 
+  function failReservation(text: string) {
+    setReservationError(text);
+    setMessage(text);
+  }
+
   async function createReservation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    setReservationError("");
 
     if (!reservationForm.nightlyRate.trim()) {
-      setMessage(
+      failReservation(
         `Enter a ${currencyLabel(reservationForm.currencyCode)} nightly rate, or set one for this room type in Admin.`
       );
       return;
@@ -352,16 +360,16 @@ export function FrontOfficeWorkspace() {
       !Number.isFinite(Number(reservationForm.nightlyRate)) ||
       Number(reservationForm.nightlyRate) < 0
     ) {
-      setMessage("Choose a room type, valid stay dates, and a valid nightly rate.");
+      failReservation("Choose a room type, valid stay dates, and a valid nightly rate.");
       return;
     }
     let primaryGuestId = reservationForm.primaryGuestId;
     if (guestMode === "new" && (!guestForm.firstName.trim() || !guestForm.lastName.trim())) {
-      setMessage("Enter the guest first name and last name.");
+      failReservation("Enter the guest first name and last name.");
       return;
     }
     if (guestMode === "existing" && !primaryGuestId) {
-      setMessage("Select an existing guest.");
+      failReservation("Select an existing guest.");
       return;
     }
     setBusy(true);
@@ -377,7 +385,7 @@ export function FrontOfficeWorkspace() {
       });
       if (!guestResult.ok) {
         setBusy(false);
-        setMessage(guestResult.error);
+        failReservation(guestResult.error);
         return;
       }
       primaryGuestId = guestResult.data.id;
@@ -403,7 +411,7 @@ export function FrontOfficeWorkspace() {
     setBusy(false);
 
     if (!result.ok) {
-      setMessage(result.error);
+      failReservation(result.error);
       return;
     }
 
@@ -686,6 +694,7 @@ export function FrontOfficeWorkspace() {
       arrivalDate: dateInputValue(0),
       departureDate: dateInputValue(1)
     }));
+    setReservationError("");
     setShowReservation(true);
     setInvoiceTarget(null);
   }
@@ -1179,6 +1188,21 @@ export function FrontOfficeWorkspace() {
                     onChange={(event) => setReservationForm({ ...reservationForm, departureDate: event.target.value })}
                   />
                 </div>
+                {reservationError ? (
+                  <p
+                    role="alert"
+                    className="mt-3 rounded border border-danger/40 bg-danger/5 px-3 py-2 text-sm font-medium text-danger"
+                  >
+                    {reservationError}
+                  </p>
+                ) : null}
+                {roomTypes.length === 0 ? (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No room types are loaded. Press Refresh, or add a room type in Admin before booking.
+                  </p>
+                ) : guestMode === "existing" && !reservationForm.primaryGuestId ? (
+                  <p className="mt-3 text-sm text-muted-foreground">Select the guest to enable Save reservation.</p>
+                ) : null}
                 <Button
                   className="mt-3"
                   disabled={
