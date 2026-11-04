@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Landmark,
   LogOut,
+  ScrollText,
   ShieldCheck,
   Store,
   Warehouse,
@@ -46,7 +47,8 @@ const moduleNav: ModuleNavItem[] = [
   { label: "Purchasing", href: "/purchasing", permissions: ["purchasing.view"], icon: ClipboardCheck },
   { label: "Finance", href: "/finance", permissions: ["accounting.view"], icon: Landmark },
   { label: "Reports", href: "/reports", permissions: ["reports.view"], icon: BarChart3 },
-  { label: "Administration", href: "/administration", permissions: ["users.view", "roles.view", "settings.view"], icon: ShieldCheck }
+  { label: "Administration", href: "/administration", permissions: ["users.view", "roles.view", "settings.view"], icon: ShieldCheck },
+  { label: "Audit Trail", href: "/audit-trail", permissions: ["audit.view"], icon: ScrollText }
 ];
 
 export function ModuleShell({ title, eyebrow, description, requiredPermissions, children }: ModuleShellProps) {

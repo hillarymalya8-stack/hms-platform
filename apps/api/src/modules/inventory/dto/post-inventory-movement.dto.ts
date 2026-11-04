@@ -21,4 +21,9 @@ export class PostInventoryMovementDto {
   @IsString()
   @MaxLength(120)
   destination?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  reason?: string;
 }
