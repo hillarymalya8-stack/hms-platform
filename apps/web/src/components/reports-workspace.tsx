@@ -85,6 +85,8 @@ type DailyReports = {
     };
     outletTotals: Array<{ name: string; amount: string }>;
     paymentTotals: Array<{ method: string; amount: string }>;
+    // Older API responses may not include seller information.
+    sellerTotals?: Array<{ name: string; orders: number; amount: string }>;
     rows: Array<{
       orderNumber: string;
       outletName: string;
@@ -98,7 +100,11 @@ type DailyReports = {
       grandTotal: string;
       paidTotal: string;
       createdAt: string;
+      soldBy?: string;
+      lastEditedBy?: string | null;
+      voidedBy?: string | null;
       payments: Array<{
+        collectedBy?: string;
         method: string;
         amount: string;
         receiptNumber: string;
@@ -583,11 +589,27 @@ function DailyPosPreview({ report }: { report: DailyReports }) {
           )}
         </div>
       </div>
+      <div className="rounded border border-border p-3">
+        <p className="mb-2 text-sm font-bold">By Seller</p>
+        {(report.pos.sellerTotals ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">No sales for this day.</p>
+        ) : (
+          (report.pos.sellerTotals ?? []).map((line) => (
+            <div key={line.name} className="flex justify-between gap-3 text-sm">
+              <span>
+                {line.name} <span className="text-muted-foreground">({line.orders} orders)</span>
+              </span>
+              <span className="font-semibold tabular-nums">{formatMoney(line.amount)}</span>
+            </div>
+          ))
+        )}
+      </div>
       <div className="max-h-[360px] overflow-auto rounded border border-border">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
+        <table className="w-full min-w-[1000px] border-collapse text-sm">
           <thead className="bg-muted/70 text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-3 py-2 font-semibold">Order</th>
+              <th className="px-3 py-2 font-semibold">Sold by</th>
               <th className="px-3 py-2 font-semibold">Outlet</th>
               <th className="px-3 py-2 font-semibold">Status</th>
               <th className="px-3 py-2 text-right font-semibold">Items</th>
@@ -599,7 +621,7 @@ function DailyPosPreview({ report }: { report: DailyReports }) {
           <tbody>
             {report.pos.rows.length === 0 ? (
               <tr>
-                <td className="px-3 py-8 text-muted-foreground" colSpan={7}>
+                <td className="px-3 py-8 text-muted-foreground" colSpan={8}>
                   No POS orders for this day.
                 </td>
               </tr>
@@ -607,6 +629,10 @@ function DailyPosPreview({ report }: { report: DailyReports }) {
               report.pos.rows.map((order) => (
                 <tr key={order.orderNumber} className="border-t border-border">
                   <td className="px-3 py-2 font-semibold">{order.orderNumber}</td>
+                  <td className="px-3 py-2">
+                    {order.soldBy ?? "Not recorded"}
+                    {collectorNote(order) ? <span className="block text-xs text-muted-foreground">{collectorNote(order)}</span> : null}
+                  </td>
                   <td className="px-3 py-2">{order.outletName}</td>
                   <td className="px-3 py-2">{order.status}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{order.itemCount}</td>
@@ -740,6 +766,17 @@ function renderRoomChartReport(report: DailyReports) {
   `;
 }
 
+// Extra staff details shown under the seller: who took payment (if someone else), edited or voided.
+function collectorNote(order: DailyReports["pos"]["rows"][number]) {
+  const notes: string[] = [];
+  const collectors = [...new Set(order.payments.map((payment) => payment.collectedBy ?? "Not recorded"))];
+  const others = collectors.filter((name) => name !== (order.soldBy ?? "Not recorded"));
+  if (others.length) notes.push(`Paid to ${others.join(", ")}`);
+  if (order.lastEditedBy) notes.push(`Edited by ${order.lastEditedBy}`);
+  if (order.voidedBy) notes.push(`Voided by ${order.voidedBy}`);
+  return notes.join(" · ");
+}
+
 function renderPosReport(report: DailyReports) {
   const summary = report.pos.summary;
   return `
@@ -762,11 +799,24 @@ function renderPosReport(report: DailyReports) {
         }
       </tbody>
     </table>
+    <h2>Sales by Seller</h2>
+    <table>
+      <tbody>
+        ${
+          (report.pos.sellerTotals ?? []).length
+            ? (report.pos.sellerTotals ?? [])
+                .map((line) => `<tr><td>${escapeHtml(line.name)} (${line.orders} orders)</td><td class="num">${formatMoney(line.amount)}</td></tr>`)
+                .join("")
+            : `<tr><td colspan="2">No sales for this day.</td></tr>`
+        }
+      </tbody>
+    </table>
     <h2>Orders</h2>
     <table>
       <thead>
         <tr>
           <th>Order</th>
+          <th>Sold by</th>
           <th>Outlet</th>
           <th>Service</th>
           <th>Status</th>
@@ -784,6 +834,7 @@ function renderPosReport(report: DailyReports) {
                   (order) => `
                     <tr>
                       <td>${escapeHtml(order.orderNumber)}</td>
+                      <td>${escapeHtml(order.soldBy ?? "Not recorded")}${collectorNote(order) ? `<br /><small>${escapeHtml(collectorNote(order))}</small>` : ""}</td>
                       <td>${escapeHtml(order.outletName)}</td>
                       <td>${escapeHtml(order.serviceType)}</td>
                       <td>${escapeHtml(order.status)}</td>
@@ -795,7 +846,7 @@ function renderPosReport(report: DailyReports) {
                   `
                 )
                 .join("")
-            : `<tr><td colspan="8">No POS orders for this day.</td></tr>`
+            : `<tr><td colspan="9">No POS orders for this day.</td></tr>`
         }
       </tbody>
     </table>

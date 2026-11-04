@@ -8,6 +8,8 @@ import {
   ClipboardList,
   Minus,
   NotebookPen,
+  Pencil,
+  SlidersHorizontal,
   PackagePlus,
   Plus,
   RefreshCcw,
@@ -16,6 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StockHistoryPanel } from "@/components/stock-history-panel";
 import { apiRequest } from "@/lib/api-client";
 
 type InventoryItem = {
@@ -45,7 +48,7 @@ type StockLine = {
 
 type Movement = {
   id: string;
-  type: "RECEIPT" | "ISSUE" | "TRANSFER";
+  type: "RECEIPT" | "ISSUE" | "TRANSFER" | "ADJUSTMENT" | "COUNT_VARIANCE";
   reference: string;
   itemName: string;
   locationName: string;
@@ -88,7 +91,9 @@ type InventoryWorkspaceResponse = {
 const BAR_RESTOCK_THRESHOLD = 3;
 
 export function InventoryWorkspace() {
-  const [task, setTask] = useState<"stock" | "receive" | "issue" | "transfer" | "usage" | "add" | "history">("stock");
+  const [task, setTask] = useState<
+    "stock" | "receive" | "issue" | "transfer" | "adjust" | "usage" | "add" | "edit" | "history"
+  >("stock");
   const [showCosts, setShowCosts] = useState(false);
   const [search, setSearch] = useState("");
   const [storeFilter, setStoreFilter] = useState("");
@@ -136,7 +141,24 @@ export function InventoryWorkspace() {
     quantity: "",
     destination: "Kitchen production",
     movementType: "ISSUE" as "ISSUE" | "TRANSFER",
-    targetLocationId: ""
+    targetLocationId: "",
+    reason: ""
+  });
+
+  const [adjustForm, setAdjustForm] = useState({
+    locationId: "",
+    itemId: "",
+    direction: "DECREASE" as "INCREASE" | "DECREASE",
+    quantity: "",
+    reason: ""
+  });
+
+  const [editForm, setEditForm] = useState({
+    itemId: "",
+    name: "",
+    unitOfMeasure: "",
+    reorderLevel: "",
+    reason: ""
   });
 
   const stockRows = useMemo(
@@ -420,6 +442,87 @@ export function InventoryWorkspace() {
     );
   }
 
+  async function adjustStock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const quantity = Number(adjustForm.quantity);
+    const item = items.find((entry) => entry.id === adjustForm.itemId);
+    const location = locations.find((entry) => entry.id === adjustForm.locationId);
+    const reason = adjustForm.reason.trim();
+
+    if (!item || !location || !Number.isFinite(quantity) || quantity <= 0) {
+      setMessage("Choose a store, an item and a quantity greater than zero.");
+      return;
+    }
+
+    if (reason.length < 3) {
+      setMessage("Enter the reason for this stock adjustment.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<{ movement: Movement }>("/inventory/adjustments", {
+      method: "POST",
+      body: JSON.stringify({ ...adjustForm, quantity: adjustForm.quantity.trim(), reason })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setAdjustForm((current) => ({ ...current, quantity: "", reason: "" }));
+    await loadData(
+      `${item.name} in ${location.name} adjusted ${adjustForm.direction === "INCREASE" ? "up" : "down"} by ${quantity} ${item.unit}.`
+    );
+  }
+
+  function chooseEditItem(itemId: string) {
+    const item = items.find((entry) => entry.id === itemId);
+    setEditForm({
+      itemId,
+      name: item?.name ?? "",
+      unitOfMeasure: item?.unit ?? "",
+      reorderLevel: item ? String(item.reorderLevel) : "",
+      reason: ""
+    });
+  }
+
+  async function saveItemEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const item = items.find((entry) => entry.id === editForm.itemId);
+    if (!item || !editForm.name.trim() || !editForm.unitOfMeasure.trim()) {
+      setMessage("Choose an item and enter its name and unit.");
+      return;
+    }
+
+    setBusy(true);
+    const result = await apiRequest<InventoryItem>(`/inventory/items/${item.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: editForm.name.trim(),
+        unitOfMeasure: editForm.unitOfMeasure.trim(),
+        reorderLevel: editForm.reorderLevel.trim() || "0",
+        reason: editForm.reason.trim() || undefined
+      })
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      setMessage(result.error);
+      return;
+    }
+
+    setEditForm((current) => ({ ...current, reason: "" }));
+    await loadData(`${result.data.name} saved.`);
+  }
+
+  const adjustStoreItems = stock
+    .filter((line) => line.locationId === adjustForm.locationId)
+    .map((line) => line.itemId);
+
   const visibleStock = stockRows.filter(
     (row) =>
       (!storeFilter || row.locationId === storeFilter) &&
@@ -475,8 +578,10 @@ export function InventoryWorkspace() {
             ["receive", "Receive Stock"],
             ["issue", "Issue Stock"],
             ["transfer", "Transfer Stock"],
+            ["adjust", "Adjust Stock"],
             ["usage", "Daily Usage"],
             ["add", "Add New Item"],
+            ["edit", "Edit Item"],
             ["history", "Stock History"]
           ] as const
         ).map(([key, label]) => (
@@ -1014,6 +1119,17 @@ export function InventoryWorkspace() {
                         ))}
                     </select>
                   </label>
+                ) : null}
+                {issueForm.movementType === "TRANSFER" ? (
+                  <label className="grid gap-1 text-sm sm:col-span-2">
+                    <span>Reason (optional)</span>
+                    <Input
+                      aria-label="Transfer reason"
+                      value={issueForm.reason}
+                      onChange={(event) => setIssueForm({ ...issueForm, reason: event.target.value })}
+                      placeholder="e.g. Bar restock for weekend"
+                    />
+                  </label>
                 ) : (
                   <label className="grid gap-1 text-sm sm:col-span-2">
                     <span>Department or purpose</span>
@@ -1035,51 +1151,170 @@ export function InventoryWorkspace() {
           </form>
         </>
       ) : null}
+      {task === "adjust" ? (
+        <form onSubmit={adjustStock} className="rounded border border-border bg-white p-4">
+          <fieldset disabled={busy} className="min-w-0">
+            <div className="mb-3 flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-primary" aria-hidden="true" />
+              <h4 className="font-bold">Adjust Stock</h4>
+            </div>
+            <p className="mb-3 text-sm text-muted-foreground">
+              Correct a store balance after a count, breakage or found stock. Your name and the reason are saved in the
+              stock history.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-sm">
+                <span>Store</span>
+                <select
+                  aria-label="Adjustment store"
+                  className="h-10 rounded border border-border bg-white px-3 text-sm"
+                  value={adjustForm.locationId}
+                  onChange={(event) => setAdjustForm({ ...adjustForm, locationId: event.target.value })}
+                >
+                  <option value="">Select store</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Item</span>
+                <select
+                  aria-label="Adjustment item"
+                  className="h-10 rounded border border-border bg-white px-3 text-sm"
+                  value={adjustForm.itemId}
+                  onChange={(event) => setAdjustForm({ ...adjustForm, itemId: event.target.value })}
+                >
+                  <option value="">Select material</option>
+                  {items.map((item) => {
+                    const line = stock.find((entry) => entry.itemId === item.id && entry.locationId === adjustForm.locationId);
+                    return (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                        {adjustForm.locationId ? ` (${line?.quantity ?? 0} on hand)` : ""}
+                        {adjustForm.locationId && !adjustStoreItems.includes(item.id) ? " - not stocked here" : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Change</span>
+                <select
+                  aria-label="Adjustment direction"
+                  className="h-10 rounded border border-border bg-white px-3 text-sm"
+                  value={adjustForm.direction}
+                  onChange={(event) =>
+                    setAdjustForm({ ...adjustForm, direction: event.target.value as "INCREASE" | "DECREASE" })
+                  }
+                >
+                  <option value="DECREASE">Remove stock (-)</option>
+                  <option value="INCREASE">Add stock (+)</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Quantity</span>
+                <Input
+                  aria-label="Adjustment quantity"
+                  value={adjustForm.quantity}
+                  onChange={(event) => setAdjustForm({ ...adjustForm, quantity: event.target.value })}
+                  placeholder="Quantity"
+                />
+              </label>
+              <label className="grid gap-1 text-sm sm:col-span-2">
+                <span>Reason (required)</span>
+                <Input
+                  aria-label="Adjustment reason"
+                  required
+                  minLength={3}
+                  value={adjustForm.reason}
+                  onChange={(event) => setAdjustForm({ ...adjustForm, reason: event.target.value })}
+                  placeholder="e.g. 2 bottles broken during delivery"
+                />
+              </label>
+            </div>
+            <Button className="mt-3" disabled={busy || adjustForm.reason.trim().length < 3}>
+              <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+              Save adjustment
+            </Button>
+          </fieldset>
+        </form>
+      ) : null}
+      {task === "edit" ? (
+        <form onSubmit={saveItemEdit} className="rounded border border-border bg-white p-4">
+          <fieldset disabled={busy} className="min-w-0">
+            <div className="mb-3 flex items-center gap-2">
+              <Pencil className="h-4 w-4 text-primary" aria-hidden="true" />
+              <h4 className="font-bold">Edit Item</h4>
+            </div>
+            <p className="mb-3 text-sm text-muted-foreground">
+              Change an item&apos;s name, unit or alert level. The item code stays the same. Changes are saved in the audit
+              trail with your name.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-sm sm:col-span-2">
+                <span>Item</span>
+                <select
+                  aria-label="Item to edit"
+                  className="h-10 rounded border border-border bg-white px-3 text-sm"
+                  value={editForm.itemId}
+                  onChange={(event) => chooseEditItem(event.target.value)}
+                >
+                  <option value="">Select material</option>
+                  {items.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.sku})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Item name</span>
+                <Input
+                  aria-label="Edit item name"
+                  value={editForm.name}
+                  onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
+                />
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Unit</span>
+                <Input
+                  aria-label="Edit unit"
+                  value={editForm.unitOfMeasure}
+                  onChange={(event) => setEditForm({ ...editForm, unitOfMeasure: event.target.value })}
+                />
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Alert when stock reaches</span>
+                <Input
+                  aria-label="Edit reorder level"
+                  value={editForm.reorderLevel}
+                  onChange={(event) => setEditForm({ ...editForm, reorderLevel: event.target.value })}
+                />
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span>Reason (optional)</span>
+                <Input
+                  aria-label="Edit reason"
+                  value={editForm.reason}
+                  onChange={(event) => setEditForm({ ...editForm, reason: event.target.value })}
+                />
+              </label>
+            </div>
+            <Button className="mt-3" disabled={busy || !editForm.itemId}>
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+              Save item
+            </Button>
+          </fieldset>
+        </form>
+      ) : null}
       {task === "history" ? (
-        <>
-          <div className="rounded border border-border bg-white">
-            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-              <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
-              <h4 className="font-bold">Stock History</h4>
-              <span className="text-xs text-muted-foreground">Latest 5 movements</span>
-            </div>
-            <div className="divide-y divide-border">
-              {movements.length === 0 ? (
-                <div className="px-4 py-8 text-sm text-muted-foreground">No inventory movements posted yet.</div>
-              ) : (
-                movements.slice(0, 5).map((movement) => (
-                  <div key={movement.id} className="px-4 py-3 text-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-bold">{movement.reference}</p>
-                        <p className="text-muted-foreground">
-                          {movement.itemName} - {movement.locationName}
-                        </p>
-                      </div>
-                      <Badge
-                        tone={
-                          movement.type === "RECEIPT" ? "success" : movement.type === "TRANSFER" ? "primary" : "warning"
-                        }
-                      >
-                        {movement.type}
-                      </Badge>
-                    </div>
-                    <p className="mt-2 tabular-nums">
-                      {movement.quantity.toFixed(2)} units - {formatMoney(movement.value)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {movement.type === "RECEIPT"
-                        ? "Stock received"
-                        : movement.type === "TRANSFER"
-                          ? "Stock moved between stores"
-                          : "Stock issued for use"}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </>
+        <StockHistoryPanel
+          items={items.map((item) => ({ id: item.id, name: item.name }))}
+          locations={locations.map((location) => ({ id: location.id, name: location.name }))}
+        />
       ) : null}
     </div>
   );

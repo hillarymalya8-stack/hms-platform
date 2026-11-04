@@ -15,6 +15,8 @@ import {
   RoomOccupancyStatus
 } from "@prisma/client";
 import { UserContext } from "../../common/auth/user-context";
+import { auditData } from "../audit/audit.service";
+import { lockBalance, recordStockMovementAudit, StockActor, stockActor } from "../inventory/stock-ledger";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { CreatePosOrderDto } from "./dto/create-pos-order.dto";
 import { PayPosOrderDto } from "./dto/pay-pos-order.dto";
@@ -459,6 +461,9 @@ export class PosService {
           taxTotal: totals.taxTotal,
           grandTotal: totals.grandTotal,
           idempotencyKey: dto.idempotencyKey,
+          // The seller is always the logged-in user; it never changes on later edits or payments.
+          createdByUserId: user.userId,
+          createdByName: user.fullName,
           items: {
             create: dto.items.map((item, index) => {
               const catalogItem = catalogByVariant.get(item.productVariantId);
@@ -501,25 +506,27 @@ export class PosService {
       }
 
       if (outlet.outletType === PosOutletType.BAR) {
-        await this.deductBarStock(tx, propertyId, order);
+        await this.deductBarStock(tx, propertyId, order, stockActor(user));
       }
 
       await tx.auditLog.create({
-        data: {
+        data: auditData({
           organizationId: user.organizationId,
           propertyId,
           userId: user.userId,
+          actorName: user.fullName,
           module: "pos",
           action: "create_order",
           recordType: "pos_order",
           recordId: order.id,
+          summary: `Sold ${order.orderNumber} at ${order.outlet.name}: ${itemSummary(order.items)} - ${order.currencyCode} ${order.grandTotal.toFixed(2)}.`,
           newValue: {
             orderNumber: order.orderNumber,
             outletId: order.outletId,
             grandTotal: order.grandTotal.toString(),
             currencyCode: order.currencyCode
           }
-        }
+        })
       });
 
       return order;
@@ -637,7 +644,9 @@ export class PosService {
           externalReceiptNumber: dto.externalReceiptNumber,
           authorizationCode: dto.authorizationCode,
           externalReference: dto.externalReference,
-          idempotencyKey: dto.idempotencyKey
+          idempotencyKey: dto.idempotencyKey,
+          collectedByUserId: user.userId,
+          collectedByName: user.fullName
         }
       });
 
@@ -695,21 +704,25 @@ export class PosService {
       }
 
       await tx.auditLog.create({
-        data: {
+        data: auditData({
           organizationId: user.organizationId,
           propertyId,
           userId: user.userId,
+          actorName: user.fullName,
           module: "pos",
           action: "take_payment",
           recordType: "payment",
           recordId: payment.id,
+          summary: `Collected ${payment.currencyCode} ${payment.amount.toFixed(2)} by ${payment.paymentMethod.replaceAll("_", " ").toLowerCase()} for ${order.orderNumber} (receipt ${payment.systemReceiptNumber}).`,
           newValue: {
+            orderNumber: order.orderNumber,
+            orderId: order.id,
             systemReceiptNumber: payment.systemReceiptNumber,
             externalReceiptNumber: payment.externalReceiptNumber,
             paymentMethod: payment.paymentMethod,
             amount: payment.amount.toString()
           }
-        }
+        })
       });
 
       return updatedOrder;
@@ -786,7 +799,7 @@ export class PosService {
       }
 
       if (order.outlet.outletType === PosOutletType.BAR) {
-        await this.returnBarStock(tx, propertyId, order, "Bar order edit");
+        await this.returnBarStock(tx, propertyId, order, "Bar order edit", stockActor(user));
       }
 
       await tx.posOrderItem.deleteMany({ where: { orderId: order.id } });
@@ -797,6 +810,10 @@ export class PosService {
           discountTotal: totals.discountTotal,
           taxTotal: totals.taxTotal,
           grandTotal: totals.grandTotal,
+          // Editing never changes the original seller (createdBy*).
+          lastEditedByUserId: user.userId,
+          lastEditedByName: user.fullName,
+          lastEditedAt: new Date(),
           items: {
             create: dto.items.map((item, index) => {
               const catalogItem = catalogByVariant.get(item.productVariantId)!;
@@ -816,23 +833,27 @@ export class PosService {
       });
 
       if (order.outlet.outletType === PosOutletType.BAR) {
-        await this.deductBarStock(tx, propertyId, updatedOrder);
+        await this.deductBarStock(tx, propertyId, updatedOrder, stockActor(user));
       }
 
       await tx.auditLog.create({
-        data: {
+        data: auditData({
           organizationId: user.organizationId,
           propertyId,
           userId: user.userId,
+          actorName: user.fullName,
           module: "pos",
           action: "edit_order",
           recordType: "pos_order",
           recordId: order.id,
+          summary: `Edited ${order.orderNumber}: ${order.grandTotal.toFixed(2)} to ${updatedOrder.grandTotal.toFixed(2)} ${order.currencyCode}. Now ${itemSummary(updatedOrder.items)}.`,
           previousValue: {
+            orderNumber: order.orderNumber,
             grandTotal: order.grandTotal.toString(),
             items: order.items.map((item) => ({ productVariantId: item.productVariantId, quantity: item.quantity.toString() }))
           },
           newValue: {
+            orderNumber: order.orderNumber,
             grandTotal: updatedOrder.grandTotal.toString(),
             items: updatedOrder.items.map((item) => ({
               productVariantId: item.productVariantId,
@@ -840,7 +861,7 @@ export class PosService {
               quantity: item.quantity.toString()
             }))
           }
-        }
+        })
       });
 
       return updatedOrder;
@@ -913,18 +934,24 @@ export class PosService {
       if (completedPayments.length > 0) {
         await tx.payment.updateMany({
           where: { id: { in: completedPayments.map((payment) => payment.id) } },
-          data: { status: PaymentStatus.VOID }
+          data: { status: PaymentStatus.VOID, voidedByUserId: user.userId, voidedByName: user.fullName, voidedAt: new Date() }
         });
       }
 
       if (order.outlet.outletType === PosOutletType.BAR) {
-        await this.returnBarStock(tx, propertyId, order, "Bar order void");
+        await this.returnBarStock(tx, propertyId, order, "Bar order void", stockActor(user));
       }
 
       const now = new Date();
       const updatedOrder = await tx.posOrder.update({
         where: { id: order.id },
-        data: { status: PosOrderStatus.VOID, voidReason: reason, voidedAt: now },
+        data: {
+          status: PosOrderStatus.VOID,
+          voidReason: reason,
+          voidedAt: now,
+          voidedByUserId: user.userId,
+          voidedByName: user.fullName
+        },
         include: orderInclude
       });
 
@@ -942,15 +969,18 @@ export class PosService {
       }
 
       await tx.auditLog.create({
-        data: {
+        data: auditData({
           organizationId: user.organizationId,
           propertyId,
           userId: user.userId,
+          actorName: user.fullName,
           module: "pos",
           action: "void_order",
           recordType: "pos_order",
           recordId: order.id,
+          summary: `Voided ${order.orderNumber} (${order.currencyCode} ${order.grandTotal.toFixed(2)}, sold by ${order.createdByName ?? "Not recorded"}). Reason: ${reason}.`,
           previousValue: {
+            orderNumber: order.orderNumber,
             status: order.status,
             grandTotal: order.grandTotal.toString()
           },
@@ -960,7 +990,7 @@ export class PosService {
             voidedPayments: completedPayments.map((payment) => payment.systemReceiptNumber),
             roomChargeReversed: roomChargeTotal.toString()
           }
-        }
+        })
       });
 
       return updatedOrder;
@@ -972,7 +1002,8 @@ export class PosService {
     tx: Prisma.TransactionClient,
     propertyId: string,
     order: { id: string; orderNumber: string },
-    label: string
+    label: string,
+    actor: StockActor
   ) {
     const barStore = await tx.inventoryLocation.findFirst({
       where: { propertyId, code: "BAR", active: true }
@@ -1001,13 +1032,15 @@ export class PosService {
     for (const [itemId, { quantity, unitCost }] of netByItem) {
       if (quantity.lte(0)) continue;
 
-      await tx.inventoryBalance.upsert({
+      await lockBalance(tx, itemId, barStore.id);
+      const balance = await tx.inventoryBalance.upsert({
         where: { itemId_locationId: { itemId, locationId: barStore.id } },
         update: { quantityOnHand: { increment: quantity } },
-        create: { itemId, locationId: barStore.id, quantityOnHand: quantity, averageCost: unitCost }
+        create: { itemId, locationId: barStore.id, quantityOnHand: quantity, averageCost: unitCost },
+        include: { item: true }
       });
 
-      await tx.inventoryMovement.create({
+      const movement = await tx.inventoryMovement.create({
         data: {
           propertyId,
           itemId,
@@ -1020,8 +1053,21 @@ export class PosService {
           unitCost,
           totalCost: quantity.mul(unitCost),
           businessDate,
-          postedAt: now
+          postedAt: now,
+          performedByUserId: actor.userId,
+          performedByName: actor.name,
+          reason: `${label} ${order.orderNumber}`,
+          toQuantityBefore: balance.quantityOnHand.minus(quantity),
+          toQuantityAfter: balance.quantityOnHand
         }
+      });
+
+      await recordStockMovementAudit(tx, actor, {
+        action: "sale_return",
+        propertyId,
+        movement,
+        item: balance.item,
+        to: barStore
       });
     }
   }
@@ -1035,7 +1081,8 @@ export class PosService {
       id: string;
       orderNumber: string;
       items: Array<{ quantity: Prisma.Decimal; productVariant: { sku: string; product: { sku: string; name: string } } }>;
-    }
+    },
+    actor: StockActor
   ) {
     const barStore = await tx.inventoryLocation.findFirst({
       where: { propertyId, code: "BAR", active: true }
@@ -1064,6 +1111,7 @@ export class PosService {
         continue;
       }
 
+      await lockBalance(tx, item.id, barStore.id);
       const balance = await tx.inventoryBalance.findUnique({
         where: {
           itemId_locationId: {
@@ -1074,7 +1122,7 @@ export class PosService {
       });
       const unitCost = balance?.averageCost ?? new Prisma.Decimal(0);
 
-      await tx.inventoryBalance.upsert({
+      const updatedBalance = await tx.inventoryBalance.upsert({
         where: {
           itemId_locationId: {
             itemId: item.id,
@@ -1094,7 +1142,8 @@ export class PosService {
         }
       });
 
-      await tx.inventoryMovement.create({
+      // Linked to the sale through sourceId, so edits/voids return exactly what this order took.
+      const movement = await tx.inventoryMovement.create({
         data: {
           propertyId,
           itemId: item.id,
@@ -1107,8 +1156,21 @@ export class PosService {
           unitCost,
           totalCost: line.quantity.mul(unitCost),
           businessDate,
-          postedAt: now
+          postedAt: now,
+          performedByUserId: actor.userId,
+          performedByName: actor.name,
+          reason: `Bar sale ${order.orderNumber}`,
+          fromQuantityBefore: updatedBalance.quantityOnHand.plus(line.quantity),
+          fromQuantityAfter: updatedBalance.quantityOnHand
         }
+      });
+
+      await recordStockMovementAudit(tx, actor, {
+        action: "sale_deduction",
+        propertyId,
+        movement,
+        item,
+        from: barStore
       });
     }
   }
@@ -1164,6 +1226,16 @@ const orderInclude = {
   payments: true,
   table: true
 } satisfies Prisma.PosOrderInclude;
+
+function itemSummary(items: Array<{ quantity: Prisma.Decimal; productVariant: { name: string; product: { name: string } } }>) {
+  return items
+    .map((item) => {
+      const variant = item.productVariant.name;
+      const showVariant = variant && !["regular", "standard", "default"].includes(variant.toLowerCase());
+      return `${item.quantity.toNumber()} x ${item.productVariant.product.name}${showVariant ? ` (${variant})` : ""}`;
+    })
+    .join(", ");
+}
 
 function money(value: Prisma.Decimal | number | string) {
   return new Prisma.Decimal(value).toFixed(2);
