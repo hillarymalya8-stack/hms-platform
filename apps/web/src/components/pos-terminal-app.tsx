@@ -85,6 +85,9 @@ type PaidReceipt = {
   total: number;
   offline?: boolean;
   syncStatus?: string;
+  // Seller recorded by the server from the logged-in session ("Not recorded" if unknown).
+  soldBy: string;
+  collectedBy?: string | null;
   lines: Array<{
     name: string;
     quantity: number;
@@ -143,12 +146,14 @@ type PosPayment = {
   paymentMethod: PaymentMethod;
   amount: string | number;
   createdAt: string;
+  collectedByName?: string | null;
 };
 
 type PosOrderResponse = {
   id: string;
   orderNumber: string;
   grandTotal: string | number;
+  createdByName?: string | null;
   payments?: PosPayment[];
 };
 
@@ -718,6 +723,8 @@ export function PosTerminalApp() {
         paymentMethod,
         currencyCode: orderCurrency,
         total: receiptTotal,
+        soldBy: paymentResult.data.createdByName ?? orderResult.data.createdByName ?? "Not recorded",
+        collectedBy: payment?.collectedByName ?? null,
         lines: mapReceiptLines(orderLines, orderCurrency),
         createdAt: payment?.createdAt ?? new Date().toISOString()
       },
@@ -778,6 +785,7 @@ export function PosTerminalApp() {
         total,
         offline: true,
         syncStatus: "PENDING SYNC",
+        soldBy: offlineSale.soldByName ?? "Not recorded",
         lines: mapReceiptLines(orderLines, saleCurrency),
         createdAt: offlineSale.createdAt
       },
@@ -801,10 +809,13 @@ export function PosTerminalApp() {
     const result = await syncQueuedOfflineSales();
     setSyncingOffline(false);
     setOfflineQueueCount(countPendingOfflineSales());
+    const waiting = result.waitingFor.length
+      ? ` Sales by ${result.waitingFor.join(", ")} sync when they sign in on this terminal.`
+      : "";
     setMessage(
-      result.conflicts
+      (result.conflicts
         ? `${result.synced} offline sales synced. ${result.conflicts} need review in Offline Sync.`
-        : `${result.synced} offline sales synced. ${result.remaining} still pending.`
+        : `${result.synced} offline sales synced. ${result.remaining} still pending.`) + waiting
     );
   }
 
@@ -826,6 +837,8 @@ export function PosTerminalApp() {
         <p>Email: info@njirolegacy.com</p>
         <p><strong>Receipt:</strong> ${escapeHtml(receipt.receiptNumber)}</p>
         <p><strong>Payment:</strong> ${escapeHtml(receipt.paymentMethod.replace("_", " "))}</p>
+        <p><strong>Sold by:</strong> ${escapeHtml(receipt.soldBy)}</p>
+        ${receipt.collectedBy && receipt.collectedBy !== receipt.soldBy ? `<p><strong>Payment taken by:</strong> ${escapeHtml(receipt.collectedBy)}</p>` : ""}
         ${receipt.offline ? `<p><strong>Status:</strong> ${escapeHtml(receipt.syncStatus ?? "PENDING SYNC")}</p>` : ""}
         <hr />
         ${receipt.lines
@@ -1302,6 +1315,7 @@ export function PosTerminalApp() {
                           {receipt.offline ? ` - ${receipt.syncStatus ?? "PENDING SYNC"}` : ""}
                           {receipt.voided ? " - VOIDED" : ""}
                         </p>
+                        <p className="text-xs text-muted-foreground">Sold by {receipt.soldBy}</p>
                         <Button
                           type="button"
                           variant="secondary"

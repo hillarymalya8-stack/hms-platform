@@ -60,6 +60,10 @@ type PosOrder = {
   serviceType: string;
   grandTotal: string | number;
   createdAt: string;
+  createdByName?: string | null;
+  lastEditedByName?: string | null;
+  lastEditedAt?: string | null;
+  voidedByName?: string | null;
   folioId?: string | null;
   outlet: { id: string; name: string; outletType: PosOutletType };
   table?: { id: string; tableNumber: string } | null;
@@ -78,6 +82,7 @@ type PosOrder = {
     paymentMethod: PaymentMethod;
     amount: string | number;
     status: string;
+    collectedByName?: string | null;
   }>;
 };
 
@@ -534,6 +539,10 @@ export function PosWorkspace() {
                       {order.table ? `Table ${order.table.tableNumber}` : order.serviceType.replaceAll("_", " ")} ·{" "}
                       {order.items.map((item) => `${Number(item.quantity)}x ${item.productVariant.product.name}`).join(", ")}
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      Sold by {soldBy(order)}
+                      {order.lastEditedAt ? ` · Edited by ${order.lastEditedByName ?? "Not recorded"}` : ""}
+                    </p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-bold tabular-nums">{formatMoney(orderBalance(order))}</span>
@@ -751,6 +760,13 @@ export function PosWorkspace() {
                         {payment.externalReceiptNumber ? ` · External ${payment.externalReceiptNumber}` : ""} · {formatDateTime(order.createdAt)}
                       </p>
                     ) : null}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Sold by {soldBy(order)}
+                      {payment && payment.collectedByName !== order.createdByName
+                        ? ` · Payment taken by ${payment.collectedByName ?? "Not recorded"}`
+                        : ""}
+                      {order.lastEditedAt ? ` · Edited by ${order.lastEditedByName ?? "Not recorded"}` : ""}
+                    </p>
                   </div>
                 );
               })
@@ -772,6 +788,9 @@ export function PosWorkspace() {
                     <p className="text-xs text-muted-foreground">
                       {order.voidReason ?? "No reason"}
                       {order.voidedAt ? ` · ${formatDateTime(order.voidedAt)}` : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Sold by {soldBy(order)} · Voided by {order.voidedByName ?? "Not recorded"}
                     </p>
                   </div>
                 ))}
@@ -805,6 +824,10 @@ function mapCatalogItem(item: CatalogItem): MenuItem {
     taxRate: Number(item.taxRate),
     menuDays: item.productVariant.product.menuDays ?? []
   };
+}
+
+function soldBy(order: PosOrder) {
+  return order.createdByName ?? "Not recorded";
 }
 
 function orderBalance(order: PosOrder) {

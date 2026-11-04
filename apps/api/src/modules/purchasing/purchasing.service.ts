@@ -12,6 +12,7 @@ import { UserContext } from "../../common/auth/user-context";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { JournalValidationError, validateBalancedJournal } from "../accounting/journal-balancer";
 import { AuditService } from "../audit/audit.service";
+import { stockActor } from "../inventory/stock-ledger";
 import { applyStockReceipt } from "../inventory/stock-receipt";
 import { CreatePurchaseOrderDto } from "./dto/create-purchase-order.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
@@ -367,7 +368,10 @@ export class PurchasingService {
           businessDate,
           sourceType: "PURCHASE_ORDER",
           sourceId: order.id,
-          journalEntryId: journal?.id ?? null
+          journalEntryId: journal?.id ?? null,
+          actor: stockActor(user),
+          auditAction: "purchase_receipt",
+          reason: `Purchase order ${order.orderNumber}${deliveryNote ? `, delivery note ${deliveryNote}` : ""}`
         });
         await tx.purchaseOrderLine.update({
           where: { id: line.id },

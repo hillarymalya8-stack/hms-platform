@@ -18,4 +18,9 @@ export class ReceiveInventoryDto {
   @IsNotEmpty()
   @MaxLength(80)
   supplierDoc?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  reason?: string;
 }

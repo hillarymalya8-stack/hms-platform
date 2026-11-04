@@ -3,7 +3,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   BedDouble,
-  Building2,
   Hotel,
   KeyRound,
   LockKeyhole,
@@ -16,6 +15,7 @@ import {
 import { roleAccessLevels } from "@hms/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AuditTrailPanel } from "@/components/audit-trail-panel";
 import { InvoiceWorkspace } from "@/components/invoice-workspace";
 import { MenuManagementPanel } from "@/components/menu-management-panel";
 import { StaffAccountsPanel } from "@/components/staff-accounts-panel";
@@ -73,23 +73,8 @@ type ApiProperty = {
   code: string;
 };
 
-type ApiAuditLog = {
-  id: string;
-  userId: string | null;
-  module: string;
-  action: string;
-  recordType: string;
-  recordId: string | null;
-  createdAt: string;
-};
-
-type AuditEvent = {
-  id: string;
-  action: string;
-  actor: string;
-  target: string;
-  detail: string;
-  createdAt: string;
+type AuditTotals = {
+  total: number;
 };
 
 type ApiPermission = {
@@ -171,7 +156,7 @@ export function AdminWorkspace() {
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [settings, setSettings] = useState<SettingsForm | null>(null);
   const [propertyName, setPropertyName] = useState("");
-  const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [auditTotal, setAuditTotal] = useState<number | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [message, setMessage] = useState("Loading administration data...");
   const [busy, setBusy] = useState(false);
@@ -228,7 +213,7 @@ export function AdminWorkspace() {
       has("front_office.view") ? apiRequest<ApiRoom[]>("/front-office/rooms") : skipped,
       has("settings.view") && propertyId ? apiRequest<ApiPropertySettings>(`/properties/${propertyId}/settings`) : skipped,
       has("properties.view") ? apiRequest<ApiProperty[]>("/properties") : skipped,
-      has("audit.view") ? apiRequest<ApiAuditLog[]>("/audit") : skipped
+      has("audit.view") ? apiRequest<AuditTotals>("/audit?pageSize=1") : skipped
     ]);
     setBusy(false);
 
@@ -263,9 +248,9 @@ export function AdminWorkspace() {
 
     if (propertyResult?.ok) setPropertyName(propertyResult.data.find((property) => property.id === propertyId)?.name ?? "");
 
-    if (auditResult?.ok) setAudit(auditResult.data.map((entry) => mapAuditLog(entry, mappedUsers)));
+    if (auditResult?.ok) setAuditTotal(auditResult.data.total);
     else {
-      setAudit([]);
+      setAuditTotal(null);
       if (auditResult) errors.push(`Audit: ${auditResult.error}`);
     }
 
@@ -274,8 +259,8 @@ export function AdminWorkspace() {
 
   async function reloadAudit() {
     if (!can("audit.view")) return;
-    const result = await apiRequest<ApiAuditLog[]>("/audit");
-    if (result.ok) setAudit(result.data.map((entry) => mapAuditLog(entry, users)));
+    const result = await apiRequest<AuditTotals>("/audit?pageSize=1");
+    if (result.ok) setAuditTotal(result.data.total);
   }
 
   async function createRoomType(event: FormEvent<HTMLFormElement>) {
@@ -507,7 +492,7 @@ export function AdminWorkspace() {
           <AdminMetric icon={UsersRound} label="Users" value={String(activeUsers.length)} detail={`${stats.active} active`} />
           <AdminMetric icon={ShieldCheck} label="Roles" value={String(activeRoles.length)} detail="Permission groups" />
           <AdminMetric icon={LockKeyhole} label="MFA coverage" value={`${stats.mfaCoverage}%`} detail="Protected accounts" />
-          <AdminMetric icon={ReceiptText} label="Audit events" value={can("audit.view") ? String(audit.length) : "-"} detail="Latest 100 recorded" />
+          <AdminMetric icon={ReceiptText} label="Audit events" value={can("audit.view") && auditTotal !== null ? String(auditTotal) : "-"} detail="Recorded events" />
         </div>
 
         <StaffAccountsPanel />
@@ -828,36 +813,17 @@ export function AdminWorkspace() {
           </form>
         ) : null}
 
-        <div className="rounded border border-border bg-white">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-            <Building2 className="h-4 w-4 text-primary" aria-hidden="true" />
-            <h4 className="font-bold">Audit Trail</h4>
-          </div>
-          <div className="divide-y divide-border">
-            {audit.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-muted-foreground">
-                {can("audit.view") ? "No audit events recorded yet." : "You do not have access to the audit trail."}
-              </div>
-            ) : (
-              audit.slice(0, 10).map((event) => (
-                <div key={event.id} className="px-4 py-3 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-bold">{event.action}</p>
-                      <p className="text-muted-foreground">{event.target}</p>
-                    </div>
-                    <span className="text-xs text-muted-foreground">{formatDateTime(event.createdAt)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {event.actor}
-                    {event.detail ? ` - ${event.detail}` : ""}
-                  </p>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
       </div>
+
+      {can("audit.view") ? (
+        <div className="xl:col-span-2">
+          <AuditTrailPanel pageSize={15} />
+        </div>
+      ) : (
+        <div className="rounded border border-border bg-white px-4 py-8 text-sm text-muted-foreground xl:col-span-2">
+          You do not have access to the audit trail.
+        </div>
+      )}
 
       {can("pos.products.manage") ? (
         <div className="xl:col-span-2">
@@ -979,23 +945,6 @@ function mapSettings(settings: ApiPropertySettings): SettingsForm {
         .map(([key, value]) => [key, value as string])
     )
   };
-}
-
-function mapAuditLog(entry: ApiAuditLog, users: AdminUser[]): AuditEvent {
-  const actor = entry.userId ? users.find((user) => user.id === entry.userId)?.name ?? "Staff member" : "System";
-  return {
-    id: entry.id,
-    action: `${humanize(entry.module)}: ${humanize(entry.action)}`,
-    actor,
-    target: humanize(entry.recordType),
-    detail: entry.recordId ? `Record ${entry.recordId.slice(0, 8)}` : "",
-    createdAt: entry.createdAt
-  };
-}
-
-function humanize(value: string) {
-  const text = value.replaceAll("_", " ").replaceAll(".", " ");
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function isTime(value: string) {
