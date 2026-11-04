@@ -150,6 +150,16 @@ export function InventoryWorkspace() {
     [items, locations, stock]
   );
 
+  const sourceStoreItems = useMemo(
+    () =>
+      stock
+        .filter((line) => line.locationId === issueForm.sourceLocationId)
+        .map((line) => ({ item: items.find((entry) => entry.id === line.itemId), quantity: line.quantity }))
+        .filter((entry): entry is { item: InventoryItem; quantity: number } => Boolean(entry.item))
+        .sort((a, b) => a.item.name.localeCompare(b.item.name)),
+    [items, stock, issueForm.sourceLocationId]
+  );
+
   const usageLocations = useMemo(() => locations.filter((location) => location.usageAllowed), [locations]);
   const visibleUsage =
     usageFilter === "ALL" ? usageRecords : usageRecords.filter((record) => record.locationId === usageFilter);
@@ -270,16 +280,20 @@ export function InventoryWorkspace() {
         ? current.locationId
         : defaultUsageLocationId
     }));
-    setIssueForm((current) => ({
-      ...current,
-      itemId: nextItems.some((item) => item.id === current.itemId) ? current.itemId : defaultItemId,
-      sourceLocationId: nextLocations.some((location) => location.id === current.sourceLocationId)
+    setIssueForm((current) => {
+      const sourceLocationId = nextLocations.some((location) => location.id === current.sourceLocationId)
         ? current.sourceLocationId
-        : defaultLocationId,
-      targetLocationId: nextTargets.some((location) => location.id === current.targetLocationId)
-        ? current.targetLocationId
-        : targetLocationId
-    }));
+        : defaultLocationId;
+      const sourceLines = result.data.stock.filter((line) => line.locationId === sourceLocationId);
+      return {
+        ...current,
+        sourceLocationId,
+        itemId: sourceLines.some((line) => line.itemId === current.itemId) ? current.itemId : "",
+        targetLocationId: nextTargets.some((location) => location.id === current.targetLocationId)
+          ? current.targetLocationId
+          : targetLocationId
+      };
+    });
     setMessage(
       nextLocations.length === 0
         ? "You have not been given access to any store. Ask an administrator to tick your store."
@@ -316,7 +330,6 @@ export function InventoryWorkspace() {
 
     setItems((current) => [...current, result.data].sort((left, right) => left.name.localeCompare(right.name)));
     setReceiptForm((current) => ({ ...current, itemId: result.data.id }));
-    setIssueForm((current) => ({ ...current, itemId: result.data.id }));
     setMaterialForm({ sku: "", name: "", unitOfMeasure: "EA", reorderLevel: "0" });
     setMessage(`${result.data.name} has been added. You can now receive stock for it.`);
   }
@@ -928,33 +941,46 @@ export function InventoryWorkspace() {
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm ">
-                  <span>Item</span>
-                  <select
-                    aria-label="Movement item"
-                    className="h-10 rounded border border-border bg-white px-3 text-sm"
-                    value={issueForm.itemId}
-                    onChange={(event) => setIssueForm({ ...issueForm, itemId: event.target.value })}
-                  >
-                    <option value="">Select material</option>
-                    {items.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-1 text-sm ">
                   <span>Take from store</span>
                   <select
                     aria-label="Source location"
                     className="h-10 rounded border border-border bg-white px-3 text-sm"
                     value={issueForm.sourceLocationId}
-                    onChange={(event) => setIssueForm({ ...issueForm, sourceLocationId: event.target.value })}
+                    onChange={(event) => {
+                      const sourceLocationId = event.target.value;
+                      const keepItem = stock.some(
+                        (line) => line.locationId === sourceLocationId && line.itemId === issueForm.itemId
+                      );
+                      setIssueForm({ ...issueForm, sourceLocationId, itemId: keepItem ? issueForm.itemId : "" });
+                    }}
                   >
                     <option value="">Select source store</option>
                     {locations.map((location) => (
                       <option key={location.id} value={location.id}>
                         {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm ">
+                  <span>Item</span>
+                  <select
+                    aria-label="Movement item"
+                    className="h-10 rounded border border-border bg-white px-3 text-sm"
+                    value={issueForm.itemId}
+                    disabled={!issueForm.sourceLocationId}
+                    onChange={(event) => setIssueForm({ ...issueForm, itemId: event.target.value })}
+                  >
+                    <option value="">
+                      {!issueForm.sourceLocationId
+                        ? "Choose a store first"
+                        : sourceStoreItems.length
+                          ? "Select material"
+                          : "No items in this store"}
+                    </option>
+                    {sourceStoreItems.map(({ item, quantity }) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} ({quantity} on hand)
                       </option>
                     ))}
                   </select>
