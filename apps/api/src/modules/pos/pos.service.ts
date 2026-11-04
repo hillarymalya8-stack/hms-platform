@@ -22,6 +22,7 @@ import { UpdatePosOrderDto } from "./dto/update-pos-order.dto";
 import { VoidPosOrderDto } from "./dto/void-pos-order.dto";
 import { assertPaymentReferencePolicy } from "./pos-payment-policy";
 import { calculatePosOrderTotals } from "./pos-totals";
+import { posChargeDescription } from "./pos-charge-description";
 
 // Bar stock below this many pieces triggers a restock alert on the bar terminal.
 const BAR_RESTOCK_THRESHOLD = 3;
@@ -573,7 +574,8 @@ export class PosService {
         },
         include: {
           outlet: true,
-          payments: true
+          payments: true,
+          items: { include: { productVariant: { include: { product: true } } } }
         }
       });
 
@@ -646,7 +648,7 @@ export class PosService {
             itemType: FolioItemType.POS_CHARGE,
             sourceType: "POS_ORDER",
             sourceId: order.id,
-            description: `POS order ${order.orderNumber}`,
+            description: posChargeDescription(order.orderNumber, order.items),
             quantity: new Prisma.Decimal(1),
             unitPrice: amount,
             totalAmount: amount
@@ -895,7 +897,7 @@ export class PosService {
             itemType: FolioItemType.POS_CHARGE,
             sourceType: "POS_ORDER_VOID",
             sourceId: order.id,
-            description: `Void POS order ${order.orderNumber}`,
+            description: posChargeDescription(order.orderNumber, order.items, true),
             quantity: new Prisma.Decimal(1),
             unitPrice: roomChargeTotal.negated(),
             totalAmount: roomChargeTotal.negated()
