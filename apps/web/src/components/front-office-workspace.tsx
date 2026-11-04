@@ -7,6 +7,7 @@ import { currencyLabel, formatCurrency, saleCurrencies, type SaleCurrency } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InvoiceWorkspace } from "@/components/invoice-workspace";
+import { FrontOfficeDayExpenses } from "@/components/front-office-day-expenses";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -1007,6 +1008,8 @@ export function FrontOfficeWorkspace() {
           )}
         </div>
       </div>
+
+      <FrontOfficeDayExpenses />
 
       {checkoutTarget ? (
         <div className="flex flex-wrap items-center gap-3 rounded border border-border bg-white p-3">

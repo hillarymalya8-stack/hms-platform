@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from "@nestjs/common";
 import { CurrentUser } from "../../common/auth/current-user.decorator";
 import { RequirePermissions } from "../../common/auth/require-permissions.decorator";
 import { UserContext } from "../../common/auth/user-context";
@@ -13,10 +13,33 @@ import { SettleFolioPaymentDto } from "./dto/settle-folio-payment.dto";
 import { UpdateRoomChartDto } from "./dto/update-room-chart.dto";
 import { UpdateRoomTypeRatesDto } from "./dto/update-room-type-rates.dto";
 import { FrontOfficeService } from "./front-office.service";
+import { DayExpensesService } from "./day-expenses.service";
+import { CreateDayExpenseDto } from "./dto/create-day-expense.dto";
 
 @Controller("front-office")
 export class FrontOfficeController {
-  constructor(private readonly frontOffice: FrontOfficeService) {}
+  constructor(
+    private readonly frontOffice: FrontOfficeService,
+    private readonly dayExpenses: DayExpensesService
+  ) {}
+
+  @RequirePermissions("front_office.view")
+  @Get("expenses")
+  listDayExpenses(@CurrentUser() user: UserContext, @Query("date") date?: string) {
+    return this.dayExpenses.list(user, date);
+  }
+
+  @RequirePermissions("front_office.view")
+  @Post("expenses")
+  createDayExpense(@CurrentUser() user: UserContext, @Body() dto: CreateDayExpenseDto) {
+    return this.dayExpenses.create(user, dto);
+  }
+
+  @RequirePermissions("front_office.view")
+  @Delete("expenses/:id")
+  removeDayExpense(@CurrentUser() user: UserContext, @Param("id", new ParseUUIDPipe()) id: string) {
+    return this.dayExpenses.void(user, id);
+  }
 
   @RequirePermissions("front_office.view")
   @Get("room-types")

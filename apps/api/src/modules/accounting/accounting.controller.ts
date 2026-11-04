@@ -3,6 +3,7 @@ import { CurrentUser } from "../../common/auth/current-user.decorator";
 import { RequirePermissions } from "../../common/auth/require-permissions.decorator";
 import { UserContext } from "../../common/auth/user-context";
 import { AccountingService } from "./accounting.service";
+import { DaySalesService } from "./day-sales.service";
 import { CloseBusinessDateDto } from "./dto/close-business-date.dto";
 import { CreateAccountDto } from "./dto/create-account.dto";
 import { CreateJournalDto } from "./dto/create-journal.dto";
@@ -10,7 +11,17 @@ import { ValidateJournalDto } from "./dto/validate-journal.dto";
 
 @Controller("accounting")
 export class AccountingController {
-  constructor(private readonly accounting: AccountingService) {}
+  constructor(
+    private readonly accounting: AccountingService,
+    private readonly daySalesService: DaySalesService
+  ) {}
+
+  // Room and POS sales, collections and front-office expenses for one day.
+  @RequirePermissions("accounting.view")
+  @Get("day-sales")
+  daySales(@CurrentUser() user: UserContext, @Query("date") date?: string) {
+    return this.daySalesService.daySales(user, date);
+  }
 
   @RequirePermissions("accounting.view")
   @Get("accounts")

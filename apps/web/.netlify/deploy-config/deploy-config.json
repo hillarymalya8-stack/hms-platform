@@ -1,0 +1,1 @@
+{"skew_protection":{"patterns":[".*"],"sources":[{"type":"cookie","name":"__vdpl"},{"type":"header","name":"X-Deployment-Id"},{"type":"query","name":"dpl"}]}}
